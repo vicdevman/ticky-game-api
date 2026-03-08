@@ -1,0 +1,116 @@
+{
+  "description": "This document outlines the Socket.io events for the Ticky-API. Use this to integrate real-time game logic, presence, and chat.",
+  "connection": {
+    "url": "Server base URL",
+    "flow": [
+      "1. Authenticate via REST API to get your JWT token.",
+      "2. (Optional) Call GET /api/v1/game/session to check for an existing gameCode.",
+      "3. Initialize Socket.io connection.",
+      "4. Emit 'registerPlayer' immediately after connection.",
+      "5. Emit 'joinGame' with a gameCode (either new or from the session check)."
+    ]
+  },
+  "clientEmits": {
+    "registerPlayer": {
+      "payload": { "userId": "number" },
+      "description": "Associates your socket connection with your user ID for presence and private messaging."
+    },
+    "joinGame": {
+      "payload": { "gameId": "string", "userId": "number" },
+      "description": "Joins a specific game room. If the game doesn't exist, it's created. If you were already in it, you're marked as reconnected."
+    },
+    "playerMove": {
+      "payload": {
+        "gameId": "string",
+        "boxIndex": "number (0-8)",
+        "player": "'X' | 'O'"
+      },
+      "description": "Sends a move to the server. Server validates the move, checks for win/draw, and updates state."
+    },
+    "sendMessage": {
+      "payload": {
+        "gameId": "string (optional, for game room chat)",
+        "message": {
+          "from": "number",
+          "to": "number",
+          "content": "string",
+          "conversationId": "number (for direct chat)"
+        }
+      },
+      "description": "Sends a chat message. If gameId is provided, it goes to the game room. Otherwise, it's a direct message."
+    },
+    "leaveGame": {
+      "payload": { "userId": "number" },
+      "description": "Formally leave the current game. Removes the participant from Redis."
+    },
+    "endGame": {
+      "payload": { "gameId": "string" },
+      "description": "Forcefully ends the session for everyone and clears state."
+    }
+  },
+  "clientListens": {
+    "playerAssigned": {
+      "payload": {
+        "character": "'X' | 'O'",
+        "participants": "Array<{userId, character, joinedAt, username, avatar_url, xp, total_games, connected}>"
+      },
+      "description": "Received after joining or reconnecting. Tells you which side you are playing and provides full details for all current players in the room (including your opponent)."
+    },
+    "playersUpdated": {
+      "payload": {
+        "players": "Array<{userId, character, joinedAt, username, avatar_url, xp, total_games, connected}>"
+      },
+      "description": "Sent to everyone in the room when someone new joins. Includes full profile data for everyone."
+    },
+    "playerReconnected": {
+      "payload": {
+        "userId": "number",
+        "participants": "Array<{userId, character, joinedAt, username, avatar_url, xp, total_games, connected}>"
+      },
+      "description": "Sent when a disconnected player returns. Provides the updated participants list."
+    },
+    "boardUpdated": {
+      "payload": {
+        "board": "string[9]",
+        "currentPlayer": "'X' | 'O'",
+        "win": "'X' | 'O' | null",
+        "draw": "boolean",
+        "xScore": "number",
+        "oScore": "number"
+      },
+      "description": "Sent after every valid move. Contains the full board state and win/draw status. NOTE: At the end of a round (win/draw), this is emitted twice: once immediately with the final result, and again after 3 seconds with a reset board and new starting player."
+    },
+    "gameMessage": {
+      "payload": {
+        "message": "object",
+        "fromUser": "public profile object"
+      },
+      "description": "Received for chat messages within a game room."
+    },
+    "newMessage": {
+      "payload": {
+        "message": "object",
+        "fromUser": "public profile object"
+      },
+      "description": "Received for direct chat messages (private)."
+    },
+    "playerConnectionIssue": {
+      "payload": { "userId": "number", "message": "string" },
+      "description": "Sent when a player's socket disconnects unexpectedly. Starts a 60s forfeit timer."
+    },
+    "playerForfeit": {
+      "payload": { "loser": "number" },
+      "description": "Sent if a disconnected player fails to return within 60 seconds."
+    },
+    "playerLeft": {
+      "payload": { "userId": "number" },
+      "description": "Sent when a player explicitly calls the 'leaveGame' event."
+    },
+    "gameEnded": {
+      "description": "Sent when the session is cleared (either via 'endGame' call or forfeit or if the game becomes empty)."
+    },
+    "gameFull": {
+      "description": "Sent if you try to join a room that already has 2 participants."
+    }
+  }
+}

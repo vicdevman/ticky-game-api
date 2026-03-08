@@ -1,335 +1,518 @@
-import express from 'express'
-import http from 'http'
-import { Server } from 'socket.io'
-import cors from 'cors';
-import mongoose from 'mongoose';
-import routes from './routes/auth.js'
-import jwt from 'jsonwebtoken';
-import { User } from './models/user.js';
-import { Messages } from './models/messages.js';
-import dotenv from 'dotenv';
+import express from "express";
+import http from "http";
+import { Server } from "socket.io";
+import cors from "cors";
+import authRouter from "./routes/auth.js";
+import chatRouter from "./routes/chat.js";
+import userRouter from "./routes/user.js";
+import gameRouter from "./routes/game.js";
+import dotenv from "dotenv";
+import "./db/db.js"; // Initialize Neon DB
+import "./db/cache.js"; // Initialize Redis
+import { User } from "./models/user.js";
+import { Chat } from "./models/chat.js";
+import { Game } from "./models/game.js";
+import { gameService } from "./services/game.js";
+import { presenceService } from "./services/presence.js";
+import { getSessionXP } from "./utils/calculateXP.js";
+
 dotenv.config();
 
-
-// connect to db
-mongoose.connect(process.env.MONGO_URI)
-.then(() => console.log('Database connected successfully!'))
-.catch((err) => console.log('error connecting to the database', err))
-
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server, {
-    cors: { origin : '*' }
+export const server = http.createServer(app);
+export const io = new Server(server, {
+  cors: { origin: "*" },
 });
-const PORT = 3000;
-const jwt_secret = 'your_jwt_secret';
+const PORT = process.env.PORT || 3000;
 
 //middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use('/api/v1/auth', routes);
-function auth(req, res, next) {
-    const token = req.headers['authorization'];
-    if (!token) {
-        return res.status(401).json({ message: 'Unauthorized' });
-    }
-    jwt.verify(token, jwt_secret, (err, decoded) => {
-        if (err) {
-            return res.status(401).json({ message: 'Unauthorized' });
-        }
-        req.user = decoded;
-        next();
-    });
-}
 
+// Routes
+app.use("/api/v1/auth", authRouter);
+app.use("/api/v1/chat", chatRouter);
+app.use("/api/v1/users", userRouter);
+app.use("/api/v1/game", gameRouter);
 
-let games = {} // {gameid: {ouenirejd:'X', iyeg7iwdow:'O'}, gameid: {ouenirejd:'X', iyeg7iwdow:'O'}, board: Array(9).fill('')}
-const onlineUsers = {}
-const socketIdToUsers = {}
+let games = {}; // {gameid: {ouenirejd:'X', iyeg7iwdow:'O'}, gameid: {ouenirejd:'X', iyeg7iwdow:'O'}, board: Array(9).fill('')}
+// onlineUsers and socketIdToUsers moved to presenceService
 
-app.get('/', (req, res) => {
-    res.status(200).json({ message: 'welcome to ticky api' });
+app.get("/", (req, res) => {
+  res.status(200).json({ message: "welcome to ticky api" });
 });
-
-// routes end point
-app.get('/users', auth, async (req, res) => {
-    // Get all users except the requesting user
-    try {
-        const currentUserId = req.user?.id;
-        // Get all users
-        let users = await User.find({}).select('username email totalScore xpreduction bonus leaderboard');
-        if (!users) return res.status(404).json({ message: 'No users found', ok: false });
-
-        // Get the latest message for each user (between current user and them)
-        let usersWithLastMessage = await Promise.all(users.map(async (user) => {
-            // Don't include self in the list
-            if (currentUserId && user._id.toString() === currentUserId) return null;
-
-            // Find the latest message between current user and this user
-            const lastMessage = await Messages.findOne({
-                $or: [
-                    { from: currentUserId, to: user._id.toString() },
-                    { from: user._id.toString(), to: currentUserId }
-                ]
-            }).sort({ _id: -1 }); // Assuming _id is ObjectId and sorts by creation time
-
-            return {
-                ...user.toObject(),
-                lastMessage: lastMessage ? lastMessage.content : null,
-                lastMessageDate: lastMessage ? lastMessage._id.getTimestamp() : null
-            };
-        }));
-
-        // Remove nulls (self)
-        usersWithLastMessage = usersWithLastMessage.filter(u => u);
-
-        // Sort: users with lastMessageDate first (desc), then users with no messages (at the end)
-        usersWithLastMessage.sort((a, b) => {
-            if (a.lastMessageDate && b.lastMessageDate) {
-                return b.lastMessageDate - a.lastMessageDate;
-            }
-            if (a.lastMessageDate) return -1;
-            if (b.lastMessageDate) return 1;
-            // If neither has a last message, sort alphabetically by username
-            return a.username.localeCompare(b.username);
-        });
-
-        res.status(200).json({ message: 'success', users: usersWithLastMessage, ok: true });
-        console.log('users fetched and ordered by last message successfully');
-    } catch (err) {
-        console.error('Error fetching users:', err);
-        res.status(500).json({ message: 'Server error', ok: false });
-    }
-    // const users = await User.find({}).select('username email totalScore xpreduction bonus leaderboard');
-    // if(!users) return res.status(404).json({ message: 'No users found', ok: false });
-    // res.status(200).json({ message: 'success', users, ok: true });
-    // console.log('users fetched successfully');
-})
-
-app.get('/user/:id', auth, async (req, res) => {
-    const { id } = req.params;
-    try {
-        const user = await User.findById(id).select('username email totalScore xpreduction bonus leaderboard');
-        if (!user) {
-            return res.status(404).json({ message: 'User not found', ok: false });
-        }
-        res.status(200).json({ message: 'success', user, ok: true });
-        console.log(`User ${id} fetched successfully: ${user}`);
-    } catch (err) {
-        console.error('Error fetching user:', err);
-        res.status(500).json({ message: 'Server error', ok: false });
-    }
-});
-
-
-app.post('/createMessage', async (req, res) => {
-    const { userOne, userTwo, content} = req.body
-})
-
 
 /// Game Logic
-const checkWin = (board, gameId) => {
-    const winningCombinations = [
-        [0, 1, 2], // Row 1
-        [3, 4, 5], // Row 2
-        [6, 7, 8], // Row 3
-        [0, 3, 6], // Column 1
-        [1, 4, 7], // Column 2
-        [2, 5, 8], // Column 3
-        [0, 4, 8], // Diagonal 1
-        [2, 4, 6], // Diagonal 2
-      ];
+const checkWin = (board) => {
+  const winningCombinations = [
+    [0, 1, 2],
+    [3, 4, 5],
+    [6, 7, 8], // Rows
+    [0, 3, 6],
+    [1, 4, 7],
+    [2, 5, 8], // Columns
+    [0, 4, 8],
+    [2, 4, 6], // Diagonals
+  ];
 
-      winningCombinations.forEach((combo) => {
-        const [a, b, c] = combo;
-        if(board[a] && board[a] === board[b] && board[a] === board[c]){
-            games[gameId]['win'] = board[a];
-        }
-      })
-}
-
-
-/// Socket io
-io.on('connection', (socket) => {
-
-    socket.on('register', ({userId}) => {
-        onlineUsers[userId] = socket.id
-        socketIdToUsers[socket.id] = userId
-        console.log(onlineUsers) 
-    })
-
-    socket.on('getMsg', async ({from, to}) => {
-    try {
-        // Assuming Messages is imported from models/messages.js
-        const messages = await Messages.find({
-            $or: [
-                { from: from, to: to },
-                { from: to, to: from }
-            ]
-        }).sort({ _id: 1 }); // sort by creation order if needed
-        socket.emit('getMsg', { messages });
-    } catch (err) {
-        console.error('Error fetching messages:', err);
-        socket.emit('getMsg', { messages: [], error: 'Failed to fetch messages' });
+  for (const combo of winningCombinations) {
+    const [a, b, c] = combo;
+    if (board[a] && board[a] === board[b] && board[a] === board[c]) {
+      return { winner: board[a], draw: false };
     }
-    })
+  }
 
-    socket.on('checkGameExist', ({gameId}) => {
-        if(games[gameId]){
-            socket.emit('checkGameExist', { exist: true, message: 'Game exist', gameId })
-            console.log('game exist')
-            return
-        }
-        socket.emit('checkGameExist', { exist: false, message: 'Game does not exist', gameId})
-        console.log('game does not exist')
-    })
+  const isDraw = board.every((cell) => cell !== "");
+  return { winner: null, draw: isDraw };
+};
 
-    socket.on('joinGame', async ({gameId, userId}) => {
-        socket.join(gameId);
-        socket.data.gameId = gameId;
-        if(!games[gameId]) {
-            games[gameId] = {};
-            games[gameId]['players'] = {};
-            games[gameId]['users'] = {};
-            games[gameId]['win'] = null;
-            games[gameId]['isDraw'] = false;
-            games[gameId]['board'] = Array(9).fill('');
-            games[gameId]['currentPlayer'] = 'X';
-            games[gameId]['X'] = 0;
-            games[gameId]['O'] = 0;
-            games[gameId]['chat'] = []; //[{player: 'X', msg: 'content'}, {player: 'O', msg: 'content'}]
-            games[gameId]['userArray'] = [] 
-        };
-        const user = await User.findOne({ _id: userId });
-        games[gameId]['users'][userId] = socket.id;
-        games[gameId]['userArray'].push(user)
-        io.to(gameId).emit('userJoined', { users: games[gameId]['userArray'] })
-        games[gameId]['players'][socket.id] = Object.keys(games[gameId]['players']).length == 0 || Object.values(games[gameId]['players']).filter((val) => val == 'O').length ? 'X' : 'O';
-        socket.emit('player', {player: games[gameId]['players'][socket.id]});
-        socket.emit('startGame', {currentPlayer: games[gameId]['currentPlayer']})
-        console.log(games[gameId]); 
-        socket.emit('joinMsg', `successfully joined ${gameId} by ${socket.id}`);
-        if(Object.keys(games[gameId]['players']).length == 2){
-            socket.to(gameId).emit('userReady', {gameId})
-        }else {
-       
-            
-        }
-    })
+// Iniite Mode
+const infiniteMode = (positions, board, index) => {
+  if (positions.length >= 6) {
+    const removeIndex = positions.slice(0, 1).join();
+    positions.shift();
 
-    socket.on('move', ({boxIndex, player, gameId}) => {              
-        if(!games[gameId]){
-           console.log(gameId)
-            return
-        };                                                                                                                                                                                                                                                                                             
-        games[gameId]['currentPlayer'] = games[gameId]['currentPlayer'] == 'X' ? 'O' : 'X';
-        games[gameId]['board'][boxIndex] = player
-        io.to(gameId).emit('boxIndex', {boxIndex: boxIndex, currentPlayer: games[gameId]['currentPlayer'], board: games[gameId]['board']})
-        checkWin(games[gameId]['board'], gameId);
-        if(games[gameId]['win']) {
-            games[gameId]['board'] = Array(9).fill('');
-            console.log('winner:',games[gameId]['win'])
-            games[gameId][games[gameId]['win']] = games[gameId][games[gameId]['win']] + 1;
-            io.to(gameId).emit('win', {winner: games[gameId]['win'], board: games[gameId]['board'], points:{X: games[gameId]['X'], O:games[gameId]['O']}})
-            games[gameId]['win'] = null;
-        }
-        else if(!games[gameId]['board'].filter((val) => val == '').length){
-            games[gameId]['isDraw'] = true;
-            games[gameId]['board'] = Array(9).fill('');
-            io.to(gameId).emit('draw', {draw: games[gameId]['isDraw'], board: games[gameId]['board']});
-            games[gameId]['isDraw'] = false;
-        };
-        console.log('sent to the frontend', boxIndex)
-        console.log(games[gameId]);
-    })
+    board[Number(removeIndex)] = "";
 
-    socket.on('sendMessage', async ({message, gameId}) => {
-        const { from, to } = message;
-      
-        // Optional: save to DB
-        try {
-            const newMessage = new Messages({
-                from: from,
-                to: to,
-                content: message.content,
-                read: 'notRead',
-                badgeCount: 0
-            });
-            await newMessage.save();
-        } catch (err) {
-            console.error('Error saving message to DB:', err);
+    return { positions, board };
+  }
+  positions.push(index);
+  return { positions, board };
+};
+
+const init = infiniteMode(
+  [1, 2, 3, 4, 5],
+  ["x", "o", "", "", "", "o", "", "x", "o"],
+  8,
+);
+console.log(init);
+
+/////////////////////////////////////////////// Socket IO
+
+io.on("connection", (socket) => {
+  console.log("socket connected:", socket.id);
+
+  const disconnectTimers = {};
+  const DISCONNECT_TIMEOUT = 60000; // 60 seconds
+
+  /*
+    USER REGISTRATION
+    */
+  socket.on("registerPlayer", ({ userId }) => {
+    presenceService.addUser(userId, socket.id);
+    console.log(
+      "online user count:",
+      presenceService.getOnlineUserIds().length,
+    );
+  });
+
+  /*
+    JOIN GAME
+    */
+  socket.on(
+    "joinGame",
+    async ({ gameId, userId, join, time = 2700, type = "classic" }) => {
+      socket.join(gameId);
+      socket.data.gameId = gameId;
+
+      const existing = await gameService.getParticipant(userId);
+      const initialGame = await gameService.getGameDetails(gameId);
+
+      if (existing.exist) {
+        await gameService.markConnected(userId);
+
+        if (disconnectTimers[userId]) {
+          clearTimeout(disconnectTimers[userId]);
+          delete disconnectTimers[userId];
         }
-       
-        // Query database to get the user info for message.from
-        let fromUser = null;
-        try {
-            fromUser = await User.findOne({ _id: from });
-        } catch (err) {
-            console.error('Error fetching user info for message.from:', err);
-        }
-        // Send to both users
-        if(gameId){
-            onlineUsers[from] && io.to(onlineUsers[from]).emit('gameMessage', {message});
-            onlineUsers[to] && io.to(onlineUsers[to]).emit('gameMessage', {message, fromUser});
-        }
-        else {
-            onlineUsers[from] && io.to(onlineUsers[from]).emit('newMessage', {message});
-            onlineUsers[to] && io.to(onlineUsers[to]).emit('newMessage', {message, fromUser});
-        }
-        console.log(onlineUsers[from], onlineUsers[to], onlineUsers, message)
-        
+
+        // Fetch rich participant data for reconnection
+        const participantsRaw = await gameService.getGameParticipants(
+          existing.participant.gameId,
+        );
+        const participantsWithProfiles = await Promise.all(
+          participantsRaw.map(async (p) => {
+            const profile = await User.findById(p.userId);
+            return {
+              ...p,
+              username: profile?.username || "Unknown",
+              avatar_url: profile?.avatar_url,
+              xp: profile?.xp || 0,
+              total_games: profile?.total_games || 0,
+            };
+          }),
+        );
+
+        socket.emit("playerAssigned", {
+          character: existing.participant.character,
+          currentPlayer: initialGame.game.currentPlayer,
+          participants: participantsWithProfiles,
+        });
+
+        io.to(existing.participant.gameId).emit("playerReconnected", {
+          userId,
+          participants: participantsWithProfiles,
+          currentPlayer: initialGame.game.currentPlayer,
+        });
+
+        return;
+      }
+
+      const gameResult = await gameService.getGameDetails(gameId);
+
+      if (join && !gameResult.exist) {
+        socket.emit("joinMsg", { exist: false });
+        return;
+      }
+
+      if (!gameResult.exist) {
+        console.log('game created with type:', type)
+        await gameService.createGame(gameId, type, time);
+      }
+
+      const participants = await gameService.getGameParticipants(gameId);
+
+      console.log("first version of participants:", participants);
+
+      if (participants.length >= 2) {
+        socket.emit("gameFull");
+        return;
+      }
+
+      // Smart character assignment: pick the one not taken
+      let character = "X";
+      if (participants.length === 1) {
+        console.log("first participant:", participants[0].character);
+        character = participants[0].character === "X" ? "O" : "X";
+        console.log("next participant character:", character);
+      }
+
+      await gameService.joinGame(gameId, userId, character);
+
+      // Fetch rich participant data (including profiles from DB) after join
+      const updatedRaw = await gameService.getGameParticipants(gameId);
+      const updatedWithProfiles = await Promise.all(
+        updatedRaw.map(async (p) => {
+          const profile = await User.findById(p.userId);
+          return {
+            ...p,
+            username: profile?.username || "Unknown",
+            avatar_url: profile?.avatar_url,
+            xp: profile?.xp || 0,
+            total_games: profile?.total_games || 0,
+          };
+        }),
+      );
+
+      const getGameDetails = await gameService.getGameDetails(gameId);
+      const gameParticipants = await gameService.getGameParticipants(gameId);
+
+      socket.emit("playerAssigned", {
+        character,
+        currentPlayer: getGameDetails.game.currentPlayer,
+        participants: updatedWithProfiles,
       });
-      
-    socket.on('leaveGame', ({gameId, player}) => {
-        if(!gameId) return
-        socket.leave(gameId);
-        delete games[gameId]['players'][socket.id];
-        console.log(games[gameId]['players']);
-        socket.to(gameId).emit('userLeft', { message:'left the Game' })
-    })
 
-    socket.on('deleteGame', ({gameId}) => {
-        if(!gameId) return
-        if(Object.keys(games[gameId]['players']).length == 1){
-            return
-        }
-        console.log('gameid deleted!')
-        if(games[gameId]) {
-            delete games[gameId]
-        }
-    })
+      console.log(getGameDetails);
+      console.log("player connected:----", userId, character);
+      console.log("found participants:---", gameParticipants);
+      console.log(
+        `current player ${userId}`,
+        getGameDetails.game.currentPlayer,
+      );
 
-    socket.on('continueGame', ({gameId}) => {
-        socket.to(gameId).emit('continueGame')
-    })
+      io.to(gameId).emit("playersUpdated", {
+        players: updatedWithProfiles,
+        currentPlayer: getGameDetails.game.currentPlayer,
+      });
+    },
+  );
 
-    socket.on('disconnect', () => {
-        const userId = socketIdToUsers[socket.id]
-            if(userId) {
-                delete onlineUsers[userId]
-                delete socketIdToUsers[socket.id]
-                console.log(`${userId} Disconnected!`)
-            }
-            const gameId = socket?.data?.gameId;
-            if(!gameId) return
-            socket.leave(gameId);
-            delete games[gameId]['players'][socket.id];
-            socket.to(gameId).emit('userLeft', { message:'left the Game' })
-            console.log('user Left')
-            if(Object.keys(games[gameId]['players']).length == 1){
-                return
-            }
-            if(games[gameId]) {
-                delete games[gameId]
-            } 
-            console.log('gameid deleted!')
-            
-    })
-})
+  /*
+    PLAYER MOVE
+    */
+  socket.on("playerMove", async ({ gameId, boxIndex, player }) => {
+    const gameResult = await gameService.getGameDetails(gameId);
 
+    if (!gameResult.exist) return;
 
+    const game = gameResult.game;
+
+    if (!game.board) {
+      game.board = Array(9).fill("");
+      game.position = [];
+    }
+
+    if (game.board[boxIndex] !== "") return;
+
+    game.board[boxIndex] = player;
+
+    if (game.type == "infinite") {
+      const result = infiniteMode(game.position, game.board, boxIndex);
+      game.board = result.board;
+      game.position = result.positions;
+    }
+    const { winner, draw } = checkWin(game.board);
+
+    if (winner) {
+      if (winner === "X") game.xScore = (game.xScore || 0) + 1;
+      else game.oScore = (game.oScore || 0) + 1;
+    }
+
+    game.currentPlayer = player === "X" ? "O" : "X";
+
+    console.log("board updated", game.currentPlayer);
+
+    // Immediately broadcast the move result
+    io.to(gameId).emit("boardUpdated", {
+      board: game.board,
+      currentPlayer: game.currentPlayer,
+      win: winner,
+      draw: draw,
+      xScore: game.xScore,
+      oScore: game.oScore,
+    });
+
+    console.log("match count: ----", game.gameCount);
+
+    if (winner || draw) {
+      // Round is over. Reset board after a delay and alternate starter.
+      const prevStarter = game.roundStartedBy || "X";
+      const nextStarter = prevStarter === "X" ? "O" : "X";
+
+      // Fetch latest game state in case of reconnections during delay
+      const latestResult = await gameService.getGameDetails(gameId);
+      if (!latestResult.exist) return;
+      const updatedGame = latestResult.game;
+
+      updatedGame.board = Array(9).fill("");
+      updatedGame.currentPlayer = nextStarter;
+      updatedGame.roundStartedBy = nextStarter;
+      updatedGame.xScore = game.xScore;
+      updatedGame.oScore = game.oScore;
+      updatedGame.gameCount += 1;
+      updatedGame.position = [];
+
+      await gameService.updateGameState(gameId, updatedGame);
+    } else {
+      await gameService.updateGameState(gameId, game);
+    }
+  });
+
+  socket.on("nextRound", async ({ gameId }) => {
+    const gameResult = await gameService.getGameDetails(gameId);
+
+    if (!gameResult.exist) return;
+
+    const game = gameResult.game;
+
+    io.to(gameId).emit("boardUpdated", {
+      board: game.board,
+      currentPlayer: game.currentPlayer,
+      win: null,
+      draw: false,
+      xScore: game.xScore,
+      oScore: game.oScore,
+    });
+  });
+
+  /*
+    SEND MESSAGE
+    */
+  socket.on("sendMessage", async ({ message, gameId }) => {
+    const { from, to } = message;
+
+    try {
+      await Chat.sendMessage({
+        conversationId: gameId || message.conversationId,
+        senderId: from,
+        content: message.content,
+      });
+    } catch (err) {
+      console.error("Error saving message to DB:", err);
+    }
+
+    let fromUser = null;
+    try {
+      fromUser = await User.findById(from);
+    } catch (err) {
+      console.error("Error fetching user info for message.from:", err);
+    }
+
+    const fromSocket = presenceService.getSocketId(from);
+    const toSocket = presenceService.getSocketId(to);
+
+    if (gameId) {
+      fromSocket && io.to(fromSocket).emit("gameMessage", { message });
+      toSocket && io.to(toSocket).emit("gameMessage", { message, fromUser });
+    } else {
+      fromSocket && io.to(fromSocket).emit("newMessage", { message });
+      toSocket && io.to(toSocket).emit("newMessage", { message, fromUser });
+    }
+  });
+
+  /*
+    PLAYER LEAVE
+    */
+  socket.on("leaveGame", async ({ userId }) => {
+    const participant = await gameService.getParticipant(userId);
+
+    if (!participant.exist) return;
+
+    const gameId = participant.participant.gameId;
+
+    await gameService.leaveGame(userId);
+
+    socket.leave(gameId);
+
+    io.to(gameId).emit("playerLeft", { userId });
+
+    // Clean up game if empty
+    const remaining = await gameService.getGameParticipants(gameId);
+    if (remaining.length === 0) {
+      console.log(`Cleaning up empty game: ${gameId}`);
+      await gameService.endGame(gameId);
+    }
+  });
+
+  /*
+    END GAME
+    */
+  socket.on("endGame", async ({ gameId }) => {
+    if (!gameId) {
+      console.log("couldnt end game");
+    }
+
+    const latestResult = await gameService.getGameDetails(gameId);
+    const gameParticipants = await gameService.getGameParticipants(gameId);
+
+    if (
+      latestResult.exist &&
+      gameParticipants &&
+      gameParticipants.length >= 2
+    ) {
+      const participantOne = gameParticipants[0];
+      const participantTwo = gameParticipants[1];
+
+      const game = latestResult.game;
+
+      const pl1 = {
+        id: participantOne.userId,
+        score:
+          participantOne.character === "X"
+            ? game.xScore || 0
+            : game.oScore || 0,
+      };
+
+      const pl2 = {
+        id: participantTwo.userId,
+        score:
+          participantTwo.character === "X"
+            ? game.xScore || 0
+            : game.oScore || 0,
+      };
+
+      const userProgress = getSessionXP(pl1, pl2);
+
+      for (const user of userProgress) {
+        await User.updateUserProgress(
+          user.userId,
+          user.xp_gained,
+          game.gameCount,
+        );
+
+        const score = user.userId === pl1.id ? pl1.score : pl2.score;
+        const oppScore = user.userId === pl1.id ? pl2.score : pl1.score;
+
+        userProgress.forEach((user) => {
+          const playerSocket = presenceService.getSocketId(user.userId);
+          const score = user.userId == pl1.id ? pl1.score : pl2.score;
+
+          if (playerSocket) {
+            io.to(playerSocket).emit("gameEnded", {
+              status: true,
+              msg: "Game Ended!",
+              score: score,
+              xp: user.xp_gained,
+              isWinner: user.is_winner,
+              totalMatchPlayed: game.gameCount,
+            });
+          }
+        });
+        await Game.saveGameResult({
+          userId: user.userId,
+          myScore: score,
+          opponentScore: oppScore,
+          winner: user.is_winner,
+          type: game.type || "classic",
+        });
+      }
+
+      console.log("attempt end Match");
+
+      await gameService.endGame(gameId);
+    } else {
+      io.to(gameId).emit("gameEnded", {
+        status: false,
+        msg: "couldn't end game",
+      });
+    }
+  });
+
+  /*
+    DISCONNECT
+    */
+  socket.on("disconnect", async () => {
+    const userId = presenceService.removeBySocketId(socket.id);
+    if (!userId) return;
+
+    const participant = await gameService.markDisconnected(userId);
+    if (!participant) return;
+
+    const gameId = participant.gameId;
+
+    io.to(gameId).emit("playerConnectionIssue", {
+      userId,
+      message: "Player reconnection...",
+    });
+
+    disconnectTimers[userId] = setTimeout(async () => {
+      const latest = await gameService.getParticipant(userId);
+
+      if (!latest.exist) return;
+
+      if (latest.participant.connected) {
+        return; // player already came back
+      }
+
+      const gameId = latest.participant.gameId;
+
+      io.to(gameId).emit("playerForfeit", {
+        loser: userId,
+      });
+
+      await gameService.endGame(gameId);
+
+      // Final check/cleanup if somehow still persisted
+      const remaining = await gameService.getGameParticipants(gameId);
+      if (remaining.length === 0) {
+        await gameService.endGame(gameId);
+      }
+
+      delete disconnectTimers[userId];
+    }, DISCONNECT_TIMEOUT);
+  });
+});
 
 server.listen(PORT, () => {
-console.log(`server started successfully! on ${PORT}`)
-})
+  console.log(`server started successfully! on ${PORT}`);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+});

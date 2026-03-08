@@ -1,0 +1,351 @@
+{
+  "baseUrl": "/api/v1",
+  "authentication": {
+    "type": "Bearer Token",
+    "headerName": "Authorization",
+    "format": "Bearer <token>"
+  },
+  "modules": {
+    "auth": {
+      "prefix": "/auth",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/register",
+          "description": "Register a new user account.",
+          "requiresAuth": false,
+          "requestBody": {
+            "username": "string (required)",
+            "email": "string (required)",
+            "password": "string (required)"
+          },
+          "successResponse": {
+            "status": 201,
+            "body": {
+              "message": "Welcome <username>, registration successful",
+              "token": "string (JWT)",
+              "user": {
+                "id": "number",
+                "username": "string",
+                "email": "string"
+              },
+              "ok": true
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/login",
+          "description": "Log in an existing user.",
+          "requiresAuth": false,
+          "requestBody": {
+            "username": "string (can be username or email)",
+            "password": "string (required)"
+          },
+          "successResponse": {
+            "status": 200,
+            "body": {
+              "message": "Welcome <username>",
+              "token": "string (JWT)",
+              "user": {
+                "id": "number",
+                "username": "string",
+                "email": "string"
+              },
+              "ok": true
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/me",
+          "description": "Get the currently authenticated user's data.",
+          "requiresAuth": true,
+          "successResponse": {
+            "status": 200,
+            "body": {
+              "message": "User data",
+              "user": {
+                "id": "number",
+                "username": "string",
+                "email": "string",
+                "avatar_url": "string|null",
+                "bio": "string|null",
+                "xp": "number",
+                "total_games": "number",
+                "last_seen_at": "string|null",
+                "created_at": "string"
+              },
+              "ok": true
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/checkdata",
+          "description": "Check if a username or email already exists in the system. Useful for real-time form validation.",
+          "requiresAuth": false,
+          "requestBody": {
+            "identifier": "string (required) - username or email to check"
+          },
+          "successResponse": {
+            "status": 200,
+            "body": {
+              "message": "unique | not unique",
+              "exists": "boolean",
+              "ok": true
+            }
+          }
+        }
+      ]
+    },
+    "chat": {
+      "prefix": "/chat",
+      "description": "All chat routes require authentication.",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/conversations",
+          "description": "Create a new direct conversation with another user, or return the existing one.",
+          "requiresAuth": true,
+          "requestBody": {
+            "user2Id": "number (required) - The ID of the user to chat with"
+          },
+          "successResponse": {
+            "status": 200,
+            "body": {
+              "message": "Conversation created or found",
+              "conversation": {
+                "id": "number"
+              },
+              "ok": true
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/conversations",
+          "description": "Get a list of all conversations for the authenticated user, including the last message and unread count.",
+          "requiresAuth": true,
+          "successResponse": {
+            "status": 200,
+            "body": {
+              "message": "Conversations fetched",
+              "conversations": [
+                {
+                  "id": "number",
+                  "type": "string",
+                  "updated_at": "string",
+                  "other_user_id": "number",
+                  "other_username": "string",
+                  "other_avatar": "string|null",
+                  "last_message_id": "number|null",
+                  "last_message": "string|null",
+                  "last_message_time": "string|null",
+                  "unread_count": "number"
+                }
+              ],
+              "ok": true
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/messages/:conversationId",
+          "description": "Get paginated messages for a specific conversation.",
+          "requiresAuth": true,
+          "urlParams": {
+            "conversationId": "number (required) - The ID of the conversation"
+          },
+          "queryParams": {
+            "limit": "number (optional, default 30) - Number of messages to fetch",
+            "cursor": "number (optional) - The ID of the oldest message currently loaded, used for fetching older messages"
+          },
+          "successResponse": {
+            "status": 200,
+            "body": {
+              "message": "Messages fetched",
+              "messages": [
+                {
+                  "id": "number",
+                  "conversation_id": "number",
+                  "sender_id": "number",
+                  "content": "string",
+                  "message_type": "string",
+                  "reply_to_message_id": "number|null",
+                  "created_at": "string"
+                }
+              ],
+              "ok": true
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/messages",
+          "description": "Send a new message in a conversation.",
+          "requiresAuth": true,
+          "requestBody": {
+            "conversationId": "number (required)",
+            "content": "string (required)",
+            "messageType": "string (optional, default 'text')",
+            "replyTo": "number (optional, message ID being replied to)"
+          },
+          "successResponse": {
+            "status": 201,
+            "body": {
+              "message": "Message sent",
+              "data": {
+                "id": "number",
+                "conversation_id": "number",
+                "sender_id": "number",
+                "content": "string",
+                "message_type": "string",
+                "reply_to_message_id": "number|null",
+                "created_at": "string"
+              },
+              "ok": true
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/messages/:conversationId/read",
+          "description": "Mark messages in a conversation as read up to a specific message ID.",
+          "requiresAuth": true,
+          "urlParams": {
+            "conversationId": "number (required)"
+          },
+          "requestBody": {
+            "messageId": "number (required) - The ID of the latest message read by the user"
+          },
+          "successResponse": {
+            "status": 200,
+            "body": {
+              "message": "Marked as read",
+              "ok": true
+            }
+          }
+        }
+      ]
+    },
+    "users": {
+      "prefix": "/users",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/",
+          "description": "Get a paginated leaderboard/list of all users, ordered by XP descending. Filters out the currently authenticated user if a valid Bearer token is provided.",
+          "requiresAuth": "Optional (used for filtering)",
+          "queryParams": {
+            "limit": "number (optional, default 20) - Number of users to fetch",
+            "offset": "number (optional, default 0) - Pagination offset"
+          },
+          "successResponse": {
+            "status": 200,
+            "body": {
+              "message": "Users fetched successfully",
+              "users": [
+                {
+                  "id": "number",
+                  "username": "string",
+                  "avatar_url": "string|null",
+                  "xp": "number",
+                  "total_games": "number",
+                  "created_at": "string"
+                }
+              ],
+              "ok": true
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/online",
+          "description": "Get a list of all currently online users, excluding the requester. Requires authentication.",
+          "requiresAuth": true,
+          "successResponse": {
+            "status": 200,
+            "body": {
+              "message": "Online users fetched",
+              "users": [
+                {
+                  "id": "number",
+                  "username": "string",
+                  "avatar_url": "string|null",
+                  "xp": "number",
+                  "total_games": "number"
+                }
+              ],
+              "ok": true
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/:id",
+          "description": "Get the public profile of a specific user.",
+          "requiresAuth": false,
+          "urlParams": {
+            "id": "number (required) - User ID"
+          },
+          "successResponse": {
+            "status": 200,
+            "body": {
+              "message": "User profile fetched",
+              "user": {
+                "id": "number",
+                "username": "string",
+                "avatar_url": "string|null",
+                "bio": "string|null",
+                "xp": "number",
+                "total_games": "number",
+                "created_at": "string"
+              },
+              "ok": true
+            }
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/profile",
+          "description": "Update the currently authenticated user's profile.",
+          "requiresAuth": true,
+          "requestBody": {
+            "username": "string (optional)",
+            "avatarUrl": "string (optional) - URL to the avatar image",
+            "bio": "string (optional)"
+          },
+          "successResponse": {
+            "status": 200,
+            "body": {
+              "message": "Profile updated successfully",
+              "user": {
+                "id": "number",
+                "username": "string",
+                "avatar_url": "string|null",
+                "bio": "string|null",
+                "xp": "number",
+                "total_games": "number"
+              },
+              "ok": true
+            }
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/account",
+          "description": "Delete the currently authenticated user's account.",
+          "requiresAuth": true,
+          "successResponse": {
+            "status": 200,
+            "body": {
+              "message": "Account deleted successfully",
+              "ok": true
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,143 @@
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { User } from "../models/user.js";
+
+const jwt_secret = process.env.JWT_SECRET || "your_jwt_secret";
+
+export const register = async (req, res) => {
+  const { username, email, password } = req.body;
+
+  try {
+    const exists = await User.exists(username, email);
+    if (exists) {
+      return res.status(400).json({
+        message: "User already exists",
+        ok: false,
+      });
+    }
+
+    const password_hash = await bcrypt.hash(password, 10);
+
+    console.log("passwor hash:---", password_hash);
+
+    const newUser = await User.create({
+      username,
+      email,
+      password_hash,
+    });
+
+    const token = jwt.sign({ id: newUser.id }, jwt_secret, {
+      expiresIn: "90d",
+    });
+
+    return res.status(201).json({
+      message: `Welcome ${newUser.username}, registration successful`,
+      token,
+      user: newUser,
+      ok: true,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error", ok: false });
+  }
+};
+
+export const login = async (req, res) => {
+  const { username, password } = req.body;
+
+  try {
+    const user = await User.findByUsernameOrEmail(username);
+    if (!user) {
+      return res.status(400).json({
+        message: "User not found",
+        ok: false,
+      });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!isMatch) {
+      return res.status(400).json({
+        message: "Invalid credentials",
+        ok: false,
+      });
+    }
+
+    const token = jwt.sign({ id: user.id }, jwt_secret, { expiresIn: "90d" });
+
+    return res.status(200).json({
+      message: `Welcome ${user.username}`,
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+      },
+      ok: true,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error", ok: false });
+  }
+};
+
+export const getMe = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+
+    if (!user) {
+      return res.status(400).json({
+        message: "User not found",
+        ok: false,
+      });
+    }
+
+    res.status(200).json({
+      message: "User data",
+      user,
+      ok: true,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error", ok: false });
+  }
+};
+
+export const getUserById = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const user = await User.findById(id);
+
+    if (!user) {
+      return res.status(400).json({
+        message: "User not found",
+        ok: false,
+      });
+    }
+
+    res.status(200).json({
+      message: "User data",
+      user,
+      ok: true,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error", ok: false });
+  }
+};
+
+export const checkUnique = async (req, res) => {
+  const { identifier } = req.body;
+
+  try {
+    const exists = await User.checkUnique(identifier);
+    res.status(200).json({
+      message: exists ? "not unique" : "unique",
+      exists,
+      ok: true,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error", ok: false });
+  }
+};

@@ -1,0 +1,75 @@
+{
+  "baseUrl": "/api/v1/game",
+  "authentication": {
+    "type": "Bearer Token",
+    "headerName": "Authorization",
+    "format": "Bearer <token>"
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/session",
+      "description": "Checks whether the authenticated user is currently in an active game session. Returns full session details if a game exists, otherwise returns exist: false.",
+      "requiresAuth": true,
+      "successResponse": {
+        "status": 200,
+        "body": {
+          "exist": true,
+          "session": {
+            "gameCode": "string",
+            "currentPlayer": "'X' | 'O'",
+            "board": "string[9]",
+            "character": "'X' | 'O'",
+            "xScore": "number",
+            "oScore": "number",
+            "type": "string",
+            "opponent": {
+              "id": "number",
+              "username": "string",
+              "avatar_url": "string | null",
+              "character": "'X' | 'O'"
+            }
+          },
+          "ok": true
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/leave",
+      "description": "Allows the user to formally leave their current game session. This removes them from the game in Redis and notifies the opponent via Socket.io ('playerLeft').",
+      "requiresAuth": true,
+      "successResponse": {
+        "status": 200,
+        "body": {
+          "message": "Left game successfully",
+          "ok": true
+        }
+      },
+      "errorResponse": {
+        "status": 400,
+        "body": {
+          "message": "User is not in a game",
+          "ok": false
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/end",
+      "description": "Ends the entire game session for all participants and clears all related state from Redis. Notifies all room members via Socket.io ('gameEnded').",
+      "requiresAuth": true,
+      "successResponse": {
+        "status": 200,
+        "body": {
+          "message": "Game session ended successfully",
+          "ok": true
+        }
+      }
+    }
+  ],
+  "integrationTips": {
+    "reconnection": "On app mount, call GET /session. If exist is true, rejoin the room via socket using the gameCode.",
+    "cleanup": "Use POST /leave if the user manually exits the game screen. Use POST /end if the game is logically over or needs to be forcefully terminated."
+  }
+}
