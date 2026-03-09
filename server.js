@@ -69,26 +69,134 @@ const checkWin = (board) => {
 
 // Iniite Mode
 const infiniteMode = (positions, board, index) => {
-  if (positions.length >= 6) {
+  let nextIndex = null
+  if(positions.length == 5) {
+    nextIndex = positions.slice(0, 1).join()
+  }
+  else if (positions.length >= 6) {
     const removeIndex = positions.slice(0, 1).join();
+    nextIndex = positions.slice(1, 2).join()
     positions.shift();
-
+    positions.push(index);
     board[Number(removeIndex)] = "";
 
-    return { positions, board };
+    return { positions, board, nextIndex };
   }
   positions.push(index);
-  return { positions, board };
+  return { positions, board, nextIndex};
 };
 
-const init = infiniteMode(
-  [1, 2, 3, 4, 5],
-  ["x", "o", "", "", "", "o", "", "x", "o"],
-  8,
-);
-console.log(init);
+// const init = infiniteMode(
+//   [1, 2, 3, 4, 5],
+//   ["x", "o", "", "", "", "o", "", "x", "o"],
+//   8,
+// );
+// console.log(init);
 
-/////////////////////////////////////////////// Socket IO
+/////////////////////////////////////////////// Socket IO helpers
+const handleProcessEndGame = async (gameId, penaltyData = null) => {
+  const latestResult = await gameService.getGameDetails(gameId);
+  const gameParticipants = await gameService.getGameParticipants(gameId);
+
+  if (latestResult.exist && gameParticipants && gameParticipants.length > 0) {
+    const game = latestResult.game;
+    let userProgress = [];
+
+    if (penaltyData && penaltyData.leaverId && gameParticipants.length >= 2) {
+      const leaver = gameParticipants.find(
+        (p) => p.userId === penaltyData.leaverId,
+      );
+      const winner = gameParticipants.find(
+        (p) => p.userId !== penaltyData.leaverId,
+      );
+
+      userProgress = [
+        {
+          userId: penaltyData.leaverId,
+          xp_gained: 0,
+          is_winner: false,
+          score: leaver.character === "X" ? game.xScore || 0 : game.oScore || 0,
+          oppScore:
+            leaver.character === "X" ? game.oScore || 0 : game.xScore || 0,
+        },
+        {
+          userId: winner.userId,
+          xp_gained: 20, // Automatic win reward
+          is_winner: true,
+          score: winner.character === "X" ? game.xScore || 0 : game.oScore || 0,
+          oppScore:
+            winner.character === "X" ? game.oScore || 0 : game.xScore || 0,
+        },
+      ];
+    } else if (gameParticipants.length >= 2) {
+      const participantOne = gameParticipants[0];
+      const participantTwo = gameParticipants[1];
+
+      const pl1 = {
+        id: participantOne.userId,
+        score:
+          participantOne.character === "X"
+            ? game.xScore || 0
+            : game.oScore || 0,
+      };
+
+      const pl2 = {
+        id: participantTwo.userId,
+        score:
+          participantTwo.character === "X"
+            ? game.xScore || 0
+            : game.oScore || 0,
+      };
+
+      userProgress = getSessionXP(pl1, pl2).map((u) => ({
+        ...u,
+        score: u.userId === pl1.id ? pl1.score : pl2.score,
+        oppScore: u.userId === pl1.id ? pl2.score : pl1.score,
+      }));
+    }
+
+    for (const user of userProgress) {
+      await User.updateUserProgress(
+        user.userId,
+        user.xp_gained,
+        game.gameCount,
+      );
+
+      console.log('game left or ended:----', userProgress)
+
+      const playerSocket = presenceService.getSocketId(user.userId);
+      if (playerSocket) {
+        io.to(playerSocket).emit("gameEnded", {
+          status: true,
+          msg:
+            penaltyData && user.userId === penaltyData.leaverId
+              ? "Game Ended - Penalty applied!"
+              : "Game Ended!",
+          score: user.score,
+          xp: user.xp_gained,
+          isWinner: user.is_winner,
+          totalMatchPlayed: game.gameCount,
+        });
+      }
+
+      await Game.saveGameResult({
+        userId: user.userId,
+        myScore: user.score,
+        opponentScore: user.oppScore,
+        winner: user.is_winner,
+        type: game.type || "classic",
+      });
+    }
+
+    console.log("Game ended and results saved:", gameId);
+    await gameService.endGame(gameId);
+  } else {
+    io.to(gameId).emit("gameEnded", {
+      status: false,
+      msg: "couldn't end game",
+    });
+  }
+};
 
 io.on("connection", (socket) => {
   console.log("socket connected:", socket.id);
@@ -148,6 +256,7 @@ io.on("connection", (socket) => {
           character: existing.participant.character,
           currentPlayer: initialGame.game.currentPlayer,
           participants: participantsWithProfiles,
+          type: initialGame.game.type,
         });
 
         io.to(existing.participant.gameId).emit("playerReconnected", {
@@ -167,7 +276,7 @@ io.on("connection", (socket) => {
       }
 
       if (!gameResult.exist) {
-        console.log('game created with type:', type)
+        console.log("game created with type:", type);
         await gameService.createGame(gameId, type, time);
       }
 
@@ -212,6 +321,7 @@ io.on("connection", (socket) => {
         character,
         currentPlayer: getGameDetails.game.currentPlayer,
         participants: updatedWithProfiles,
+        type: getGameDetails.game.type,
       });
 
       console.log(getGameDetails);
@@ -241,7 +351,8 @@ io.on("connection", (socket) => {
 
     if (!game.board) {
       game.board = Array(9).fill("");
-      game.position = [];
+      game.positions = [];
+      game.nextIndex = null;
     }
 
     if (game.board[boxIndex] !== "") return;
@@ -249,9 +360,17 @@ io.on("connection", (socket) => {
     game.board[boxIndex] = player;
 
     if (game.type == "infinite") {
-      const result = infiniteMode(game.position, game.board, boxIndex);
+      console.log("beforeeee monitorinnggg inifite game:", {
+        gamePosition: game.positions,
+        gameBoard: game.board,
+        boxIndex,
+      });
+      const result = infiniteMode(game.positions, game.board, boxIndex);
       game.board = result.board;
-      game.position = result.positions;
+      game.positions = result.positions;
+      game.nextIndex = result.nextIndex
+
+      console.log("monitorinnggg inifite game:", { result });
     }
     const { winner, draw } = checkWin(game.board);
 
@@ -272,6 +391,8 @@ io.on("connection", (socket) => {
       draw: draw,
       xScore: game.xScore,
       oScore: game.oScore,
+      type: game.type,
+      nextIndex: game.nextIndex,
     });
 
     console.log("match count: ----", game.gameCount);
@@ -292,7 +413,8 @@ io.on("connection", (socket) => {
       updatedGame.xScore = game.xScore;
       updatedGame.oScore = game.oScore;
       updatedGame.gameCount += 1;
-      updatedGame.position = [];
+      updatedGame.positions = [];
+      updatedGame.nextIndex = null;
 
       await gameService.updateGameState(gameId, updatedGame);
     } else {
@@ -314,6 +436,8 @@ io.on("connection", (socket) => {
       draw: false,
       xScore: game.xScore,
       oScore: game.oScore,
+      type: game.type,
+      nextIndex: game.nextIndex,
     });
   });
 
@@ -361,18 +485,21 @@ io.on("connection", (socket) => {
     if (!participant.exist) return;
 
     const gameId = participant.participant.gameId;
+    const participants = await gameService.getGameParticipants(gameId);
 
-    await gameService.leaveGame(userId);
+    if (participants.length >= 2) {
+      // If 2 players, apply penalty to leaver and reward opponent
+      await handleProcessEndGame(gameId, { leaverId: userId });
+    } else {
+      // Just clean up if it's only one player
+      await gameService.leaveGame(userId);
+      socket.leave(gameId);
+      io.to(gameId).emit("playerLeft", { userId });
 
-    socket.leave(gameId);
-
-    io.to(gameId).emit("playerLeft", { userId });
-
-    // Clean up game if empty
-    const remaining = await gameService.getGameParticipants(gameId);
-    if (remaining.length === 0) {
-      console.log(`Cleaning up empty game: ${gameId}`);
-      await gameService.endGame(gameId);
+      const remaining = await gameService.getGameParticipants(gameId);
+      if (remaining.length === 0) {
+        await gameService.endGame(gameId);
+      }
     }
   });
 
@@ -382,82 +509,9 @@ io.on("connection", (socket) => {
   socket.on("endGame", async ({ gameId }) => {
     if (!gameId) {
       console.log("couldnt end game");
+      return;
     }
-
-    const latestResult = await gameService.getGameDetails(gameId);
-    const gameParticipants = await gameService.getGameParticipants(gameId);
-
-    if (
-      latestResult.exist &&
-      gameParticipants &&
-      gameParticipants.length >= 2
-    ) {
-      const participantOne = gameParticipants[0];
-      const participantTwo = gameParticipants[1];
-
-      const game = latestResult.game;
-
-      const pl1 = {
-        id: participantOne.userId,
-        score:
-          participantOne.character === "X"
-            ? game.xScore || 0
-            : game.oScore || 0,
-      };
-
-      const pl2 = {
-        id: participantTwo.userId,
-        score:
-          participantTwo.character === "X"
-            ? game.xScore || 0
-            : game.oScore || 0,
-      };
-
-      const userProgress = getSessionXP(pl1, pl2);
-
-      for (const user of userProgress) {
-        await User.updateUserProgress(
-          user.userId,
-          user.xp_gained,
-          game.gameCount,
-        );
-
-        const score = user.userId === pl1.id ? pl1.score : pl2.score;
-        const oppScore = user.userId === pl1.id ? pl2.score : pl1.score;
-
-        userProgress.forEach((user) => {
-          const playerSocket = presenceService.getSocketId(user.userId);
-          const score = user.userId == pl1.id ? pl1.score : pl2.score;
-
-          if (playerSocket) {
-            io.to(playerSocket).emit("gameEnded", {
-              status: true,
-              msg: "Game Ended!",
-              score: score,
-              xp: user.xp_gained,
-              isWinner: user.is_winner,
-              totalMatchPlayed: game.gameCount,
-            });
-          }
-        });
-        await Game.saveGameResult({
-          userId: user.userId,
-          myScore: score,
-          opponentScore: oppScore,
-          winner: user.is_winner,
-          type: game.type || "classic",
-        });
-      }
-
-      console.log("attempt end Match");
-
-      await gameService.endGame(gameId);
-    } else {
-      io.to(gameId).emit("gameEnded", {
-        status: false,
-        msg: "couldn't end game",
-      });
-    }
+    await handleProcessEndGame(gameId);
   });
 
   /*
@@ -488,17 +542,7 @@ io.on("connection", (socket) => {
 
       const gameId = latest.participant.gameId;
 
-      io.to(gameId).emit("playerForfeit", {
-        loser: userId,
-      });
-
-      await gameService.endGame(gameId);
-
-      // Final check/cleanup if somehow still persisted
-      const remaining = await gameService.getGameParticipants(gameId);
-      if (remaining.length === 0) {
-        await gameService.endGame(gameId);
-      }
+      await handleProcessEndGame(gameId, { leaverId: userId });
 
       delete disconnectTimers[userId];
     }, DISCONNECT_TIMEOUT);
