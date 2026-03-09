@@ -115,9 +115,11 @@ export const endSession = async (req, res) => {
 };
 
 export const getGameHistory = async (req, res) => {
-  const userId = req.user.id;
+  const {id} = req.params;
+  const user = req.user;
   try {
-    const history = await Game.getUserHistory(userId);
+    const history = id == 'me' ? await Game.getUserHistory(user.id) : await Game.getUserHistory(id);
+    console.log(history)
     res.status(200).json({
       message: "Game history fetched",
       history,

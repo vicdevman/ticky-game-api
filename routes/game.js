@@ -14,7 +14,7 @@ const router = Router();
 router.get("/session", auth, getMyGameSession);
 router.post("/leave", auth, leaveGame);
 router.post("/end", auth, endSession);
-router.get("/history", auth, getGameHistory);
+router.get("/history/:id", auth, getGameHistory);
 router.get("/waiting", getWaitingGames);
 
 export default router;
