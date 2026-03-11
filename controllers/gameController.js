@@ -115,11 +115,34 @@ export const endSession = async (req, res) => {
 };
 
 export const getGameHistory = async (req, res) => {
-  const {id} = req.params;
+  const { id } = req.params;
   const user = req.user;
   try {
-    const history = id == 'me' ? await Game.getUserHistory(user.id) : await Game.getUserHistory(id);
-    console.log(history)
+    const rawHistory =
+      id == "me"
+        ? await Game.getUserHistory(user.id)
+        : await Game.getUserHistory(id);
+
+        console.log(rawHistory)
+
+    const history = rawHistory.map((entry) => ({
+      id: entry.id,
+      user_id: entry.user_id,
+      my_score: entry.my_score,
+      opponent_score: entry.opponent_score,
+      winner: entry.winner,
+      type: entry.type,
+      created_at: entry.created_at,
+      opponent: entry.opponent_id
+        ? {
+            id: entry.opponent_id,
+            username: entry.opponent_username,
+            avatar_url: entry.opponent_avatar_url,
+            xp: entry.opponent_xp,
+          }
+        : null,
+    }));
+
     res.status(200).json({
       message: "Game history fetched",
       history,

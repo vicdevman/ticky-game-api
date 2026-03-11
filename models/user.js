@@ -99,6 +99,27 @@ export const User = {
     `;
   },
 
+  async getRankAndWins(id) {
+    const [rankResult] = await db`
+      WITH RankedUsers AS (
+        SELECT id, RANK() OVER (ORDER BY xp DESC, xp_updated_at ASC, created_at ASC) as rank
+        FROM users
+      )
+      SELECT rank FROM RankedUsers WHERE id = ${id}
+    `;
+
+    const [winsResult] = await db`
+      SELECT COUNT(*) as total_wins
+      FROM game_history
+      WHERE user_id = ${id} AND winner = true
+    `;
+
+    return {
+      rank: rankResult ? Number(rankResult.rank) : null,
+      total_wins: winsResult ? Number(winsResult.total_wins) : 0,
+    };
+  },
+
   async delete(id) {
     await db`
       DELETE FROM users

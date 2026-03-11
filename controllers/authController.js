@@ -91,9 +91,11 @@ export const getMe = async (req, res) => {
       });
     }
 
+    const { rank, total_wins } = await User.getRankAndWins(req.user.id);
+
     res.status(200).json({
       message: "User data",
-      user,
+      user: {...user,  rank, total_wins },
       ok: true,
     });
   } catch (err) {

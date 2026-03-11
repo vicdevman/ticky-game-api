@@ -69,13 +69,12 @@ const checkWin = (board) => {
 
 // Iniite Mode
 const infiniteMode = (positions, board, index) => {
-  let nextIndex = null
-  if(positions.length == 5) {
-    nextIndex = positions.slice(0, 1).join()
-  }
-  else if (positions.length >= 6) {
+  let nextIndex = null;
+  if (positions.length == 5) {
+    nextIndex = positions.slice(0, 1).join();
+  } else if (positions.length >= 6) {
     const removeIndex = positions.slice(0, 1).join();
-    nextIndex = positions.slice(1, 2).join()
+    nextIndex = positions.slice(1, 2).join();
     positions.shift();
     positions.push(index);
     board[Number(removeIndex)] = "";
@@ -83,7 +82,7 @@ const infiniteMode = (positions, board, index) => {
     return { positions, board, nextIndex };
   }
   positions.push(index);
-  return { positions, board, nextIndex};
+  return { positions, board, nextIndex };
 };
 
 // const init = infiniteMode(
@@ -162,7 +161,7 @@ const handleProcessEndGame = async (gameId, penaltyData = null) => {
         game.gameCount,
       );
 
-      console.log('game left or ended:----', userProgress)
+      console.log("game left or ended:----", userProgress);
 
       const playerSocket = presenceService.getSocketId(user.userId);
       if (playerSocket) {
@@ -181,6 +180,8 @@ const handleProcessEndGame = async (gameId, penaltyData = null) => {
 
       await Game.saveGameResult({
         userId: user.userId,
+        opponentId:
+          userProgress.find((u) => u.userId !== user.userId)?.userId || null,
         myScore: user.score,
         opponentScore: user.oppScore,
         winner: user.is_winner,
@@ -190,11 +191,74 @@ const handleProcessEndGame = async (gameId, penaltyData = null) => {
 
     console.log("Game ended and results saved:", gameId);
     await gameService.endGame(gameId);
+    broadcastWaitingGames(); // Broadcast updated waiting games after a game ends
   } else {
     io.to(gameId).emit("gameEnded", {
       status: false,
       msg: "couldn't end game",
     });
+  }
+};
+
+const broadcastOnlineUsers = async () => {
+  try {
+    const onlineIds = presenceService.getOnlineUserIds();
+    const users = await Promise.all(
+      onlineIds.map(async (id) => {
+        const u = await User.findById(id);
+        if (!u) return null;
+        return {
+          id: u.id,
+          username: u.username,
+          avatar_url: u.avatar_url,
+          xp: u.xp,
+          total_games: u.total_games,
+        };
+      }),
+    );
+    const allUsers = users.filter(Boolean);
+
+    // Send each user a personalized list excluding themselves
+    for (const userId of onlineIds) {
+      const socketId = presenceService.getSocketId(userId);
+      if (socketId) {
+        io.to(socketId).emit("usersOnline", {
+          users: allUsers.filter((u) => String(u.id) !== String(userId)),
+          ok: true,
+        });
+      }
+    }
+  } catch (err) {
+    console.error("Error broadcasting online users:", err);
+  }
+};
+
+const broadcastWaitingGames = async () => {
+  try {
+    const games = await gameService.getWaitingGames();
+    const enriched = await Promise.all(
+      games.map(async (g) => {
+        const profile = await User.findById(g.waitingPlayer.userId);
+        return {
+          gameId: g.id,
+          type: g.type,
+          time: g.time,
+          waitingPlayer: {
+            userId: g.waitingPlayer.userId,
+            username: profile?.username || "Unknown",
+            avatar_url: profile?.avatar_url,
+            character: g.waitingPlayer.character,
+            xp: profile?.xp || 0,
+          },
+        };
+      }),
+    );
+    io.emit("waitingGames", {
+      games: enriched,
+      ok: true,
+    });
+  } catch (err) {
+    console.error("Error broadcasting waiting games:", err);
   }
 };
 
@@ -213,6 +277,7 @@ io.on("connection", (socket) => {
       "online user count:",
       presenceService.getOnlineUserIds().length,
     );
+    broadcastOnlineUsers();
   });
 
   /*
@@ -278,6 +343,7 @@ io.on("connection", (socket) => {
       if (!gameResult.exist) {
         console.log("game created with type:", type);
         await gameService.createGame(gameId, type, time);
+        broadcastWaitingGames();
       }
 
       const participants = await gameService.getGameParticipants(gameId);
@@ -336,6 +402,8 @@ io.on("connection", (socket) => {
         players: updatedWithProfiles,
         currentPlayer: getGameDetails.game.currentPlayer,
       });
+
+      broadcastWaitingGames();
     },
   );
 
@@ -368,7 +436,7 @@ io.on("connection", (socket) => {
       const result = infiniteMode(game.positions, game.board, boxIndex);
       game.board = result.board;
       game.positions = result.positions;
-      game.nextIndex = result.nextIndex
+      game.nextIndex = result.nextIndex;
 
       console.log("monitorinnggg inifite game:", { result });
     }
@@ -467,11 +535,19 @@ io.on("connection", (socket) => {
     const fromSocket = presenceService.getSocketId(from);
     const toSocket = presenceService.getSocketId(to);
 
+    console.log({
+      conversationId: gameId || message.conversationId,
+      senderId: from,
+      content: message.content,
+      fromSocket,
+      toSocket,
+    });
+
     if (gameId) {
       fromSocket && io.to(fromSocket).emit("gameMessage", { message });
       toSocket && io.to(toSocket).emit("gameMessage", { message, fromUser });
     } else {
-      fromSocket && io.to(fromSocket).emit("newMessage", { message });
+      // fromSocket && io.to(fromSocket).emit("newMessage", { message });
       toSocket && io.to(toSocket).emit("newMessage", { message, fromUser });
     }
   });
@@ -495,6 +571,7 @@ io.on("connection", (socket) => {
       await gameService.leaveGame(userId);
       socket.leave(gameId);
       io.to(gameId).emit("playerLeft", { userId });
+      broadcastWaitingGames();
 
       const remaining = await gameService.getGameParticipants(gameId);
       if (remaining.length === 0) {
@@ -546,6 +623,8 @@ io.on("connection", (socket) => {
 
       delete disconnectTimers[userId];
     }, DISCONNECT_TIMEOUT);
+
+    broadcastOnlineUsers();
   });
 });
 

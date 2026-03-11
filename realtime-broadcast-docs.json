@@ -1,0 +1,44 @@
+{
+  "description": "This document outlines the real-time broadcast events intended to replace polling for online users and waiting games.",
+  "events": {
+    "usersOnline": {
+      "broadcastScope": "All authenticated/registered clients",
+      "trigger": "A user registers via 'registerPlayer' or disconnects.",
+      "payload": {
+        "users": [
+          {
+            "id": "number",
+            "username": "string",
+            "avatar_url": "string | null",
+            "xp": "number",
+            "total_games": "number"
+          }
+        ],
+        "ok": "boolean"
+      },
+      "frontendAction": "Replace 'GET /api/v1/users/online' polling with this event. Call the HTTP endpoint once on mount, then listen for this event to keep the UI in sync."
+    },
+    "waitingGames": {
+      "broadcastScope": "All connected clients",
+      "trigger": "A new game is created or a waiting game is joined/cancelled.",
+      "payload": {
+        "games": [
+          {
+            "gameId": "string",
+            "type": "string",
+            "time": "number",
+            "waitingPlayer": {
+              "userId": "number",
+              "username": "string",
+              "avatar_url": "string | null",
+              "character": "string",
+              "xp": "number"
+            }
+          }
+        ],
+        "ok": "boolean"
+      },
+      "frontendAction": "Replace 'GET /api/v1/game/waiting' polling with this event. Call the HTTP endpoint once on mount, then listen for this event."
+    }
+  }
+}

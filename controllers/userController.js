@@ -109,6 +109,9 @@ export const getUserPublicProfile = async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: "User not found", ok: false });
     }
+
+    const { rank, total_wins } = await User.getRankAndWins(id);
+
     // Return only public fields
     const publicProfile = {
       id: user.id,
@@ -118,6 +121,8 @@ export const getUserPublicProfile = async (req, res) => {
       xp: user.xp,
       total_games: user.total_games,
       created_at: user.created_at,
+      rank,
+      total_wins,
     };
     res
       .status(200)
