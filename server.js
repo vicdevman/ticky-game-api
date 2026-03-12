@@ -154,15 +154,8 @@ const handleProcessEndGame = async (gameId, penaltyData = null) => {
       }));
     }
 
+    // 1. Emit immediately to clients first based on calculated progress
     for (const user of userProgress) {
-      await User.updateUserProgress(
-        user.userId,
-        user.xp_gained,
-        game.gameCount,
-      );
-
-      console.log("game left or ended:----", userProgress);
-
       const playerSocket = presenceService.getSocketId(user.userId);
       if (playerSocket) {
         io.to(playerSocket).emit("gameEnded", {
@@ -174,24 +167,46 @@ const handleProcessEndGame = async (gameId, penaltyData = null) => {
           score: user.score,
           xp: user.xp_gained,
           isWinner: user.is_winner,
-          totalMatchPlayed: game.gameCount,
+          totalMatchPlayed: game.gameCount, // note: hasn't been incremented in DB yet, but accurate enough for UI
         });
       }
-
-      await Game.saveGameResult({
-        userId: user.userId,
-        opponentId:
-          userProgress.find((u) => u.userId !== user.userId)?.userId || null,
-        myScore: user.score,
-        opponentScore: user.oppScore,
-        winner: user.is_winner,
-        type: game.type || "classic",
-      });
     }
 
-    console.log("Game ended and results saved:", gameId);
-    await gameService.endGame(gameId);
-    broadcastWaitingGames(); // Broadcast updated waiting games after a game ends
+    // 2. Fire-and-forget background cache and DB updates
+    (async () => {
+      try {
+        console.log("Starting background DB updates for game:", gameId);
+
+        // Clear out game state from cache immediately to prevent new joiners
+        await gameService.endGame(gameId);
+
+        const updatePromises = userProgress.map(async (user) => {
+          await User.updateUserProgress(
+            user.userId,
+            user.xp_gained,
+            game.gameCount,
+          );
+
+          await Game.saveGameResult({
+            userId: user.userId,
+            opponentId:
+              userProgress.find((u) => u.userId !== user.userId)?.userId ||
+              null,
+            myScore: user.score,
+            opponentScore: user.oppScore,
+            winner: user.is_winner,
+            type: game.type || "classic",
+          });
+        });
+
+        await Promise.all(updatePromises);
+        console.log("Game ended DB results saved successfully for:", gameId);
+
+        await broadcastWaitingGames();
+      } catch (err) {
+        console.error("Error during background DB updates for gameEnded:", err);
+      }
+    })();
   } else {
     io.to(gameId).emit("gameEnded", {
       status: false,
@@ -512,18 +527,8 @@ io.on("connection", (socket) => {
   /*
     SEND MESSAGE
     */
-  socket.on("sendMessage", async ({ message, gameId }) => {
+  socket.on("sendMessage", async ({ message, gameId = null }) => {
     const { from, to } = message;
-
-    try {
-      await Chat.sendMessage({
-        conversationId: gameId || message.conversationId,
-        senderId: from,
-        content: message.content,
-      });
-    } catch (err) {
-      console.error("Error saving message to DB:", err);
-    }
 
     let fromUser = null;
     try {
@@ -535,20 +540,30 @@ io.on("connection", (socket) => {
     const fromSocket = presenceService.getSocketId(from);
     const toSocket = presenceService.getSocketId(to);
 
-    console.log({
-      conversationId: gameId || message.conversationId,
-      senderId: from,
-      content: message.content,
-      fromSocket,
-      toSocket,
-    });
-
     if (gameId) {
+      console.log("chat gameId:", gameId, message);
       fromSocket && io.to(fromSocket).emit("gameMessage", { message });
       toSocket && io.to(toSocket).emit("gameMessage", { message, fromUser });
     } else {
       // fromSocket && io.to(fromSocket).emit("newMessage", { message });
       toSocket && io.to(toSocket).emit("newMessage", { message, fromUser });
+    }
+
+    try {
+      let gameConvo = null;
+      if (gameId) {
+        gameConvo = await Chat.createDirectConversation(from, to);
+      }
+
+      console.log("game convo updated i");
+
+      await Chat.sendMessage({
+        conversationId: gameConvo || message.conversationId,
+        senderId: from,
+        content: message.content,
+      });
+    } catch (err) {
+      console.error("Error saving message to DB:", err);
     }
   });
 
@@ -565,18 +580,25 @@ io.on("connection", (socket) => {
 
     if (participants.length >= 2) {
       // If 2 players, apply penalty to leaver and reward opponent
-      await handleProcessEndGame(gameId, { leaverId: userId });
+      handleProcessEndGame(gameId, { leaverId: userId }).catch(console.error);
     } else {
       // Just clean up if it's only one player
-      await gameService.leaveGame(userId);
       socket.leave(gameId);
       io.to(gameId).emit("playerLeft", { userId });
-      broadcastWaitingGames();
 
-      const remaining = await gameService.getGameParticipants(gameId);
-      if (remaining.length === 0) {
-        await gameService.endGame(gameId);
-      }
+      (async () => {
+        try {
+          await gameService.leaveGame(userId);
+          await broadcastWaitingGames();
+
+          const remaining = await gameService.getGameParticipants(gameId);
+          if (remaining.length === 0) {
+            await gameService.endGame(gameId);
+          }
+        } catch (err) {
+          console.error("Error in background leaveGame cleanup:", err);
+        }
+      })();
     }
   });
 
@@ -588,7 +610,7 @@ io.on("connection", (socket) => {
       console.log("couldnt end game");
       return;
     }
-    await handleProcessEndGame(gameId);
+    handleProcessEndGame(gameId).catch(console.error);
   });
 
   /*
@@ -619,7 +641,7 @@ io.on("connection", (socket) => {
 
       const gameId = latest.participant.gameId;
 
-      await handleProcessEndGame(gameId, { leaverId: userId });
+      handleProcessEndGame(gameId, { leaverId: userId }).catch(console.error);
 
       delete disconnectTimers[userId];
     }, DISCONNECT_TIMEOUT);
