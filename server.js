@@ -416,6 +416,7 @@ io.on("connection", (socket) => {
       io.to(gameId).emit("playersUpdated", {
         players: updatedWithProfiles,
         currentPlayer: getGameDetails.game.currentPlayer,
+        gameCode: gameId,
       });
 
       broadcastWaitingGames();
@@ -578,13 +579,23 @@ io.on("connection", (socket) => {
     const gameId = participant.participant.gameId;
     const participants = await gameService.getGameParticipants(gameId);
 
+    socket.emit("playerLeft", { msg: 'You left the match!' });
+
+    const opponent = participants.find((p) => p.userId !== userId);
+    if (opponent) {
+      const opponentSocketId = presenceService.getSocketId(opponent.userId);
+      if (opponentSocketId) {
+        io.to(opponentSocketId).emit("playerLeft", { msg: 'Opponent left the match!' });
+        console.log('emiiteed player left to')
+      }
+    }
+
     if (participants.length >= 2) {
       // If 2 players, apply penalty to leaver and reward opponent
       handleProcessEndGame(gameId, { leaverId: userId }).catch(console.error);
     } else {
       // Just clean up if it's only one player
       socket.leave(gameId);
-      io.to(gameId).emit("playerLeft", { userId });
 
       (async () => {
         try {
