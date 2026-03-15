@@ -216,36 +216,39 @@ const handleProcessEndGame = async (gameId, penaltyData = null) => {
 };
 
 const broadcastOnlineUsers = async () => {
-  try {
-    const onlineIds = presenceService.getOnlineUserIds();
-    const users = await Promise.all(
-      onlineIds.map(async (id) => {
-        const u = await User.findById(id);
-        if (!u) return null;
-        return {
-          id: u.id,
-          username: u.username,
-          avatar_url: u.avatar_url,
-          xp: u.xp,
-          total_games: u.total_games,
-        };
-      }),
-    );
-    const allUsers = users.filter(Boolean);
+  // Fire-and-forget background broadcast to keep socket loop fast
+  (async () => {
+    try {
+      const onlineIds = presenceService.getOnlineUserIds();
+      const users = await Promise.all(
+        onlineIds.map(async (id) => {
+          const u = await User.findById(id);
+          if (!u) return null;
+          return {
+            id: u.id,
+            username: u.username,
+            avatar_url: u.avatar_url,
+            xp: u.xp,
+            total_games: u.total_games,
+          };
+        }),
+      );
+      const allUsers = users.filter(Boolean);
 
-    // Send each user a personalized list excluding themselves
-    for (const userId of onlineIds) {
-      const socketId = presenceService.getSocketId(userId);
-      if (socketId) {
-        io.to(socketId).emit("usersOnline", {
-          users: allUsers.filter((u) => String(u.id) !== String(userId)),
-          ok: true,
-        });
+      // Send each user a personalized list excluding themselves
+      for (const userId of onlineIds) {
+        const socketId = presenceService.getSocketId(userId);
+        if (socketId) {
+          io.to(socketId).emit("usersOnline", {
+            users: allUsers.filter((u) => String(u.id) !== String(userId)),
+            ok: true,
+          });
+        }
       }
+    } catch (err) {
+      console.error("Error broadcasting online users:", err);
     }
-  } catch (err) {
-    console.error("Error broadcasting online users:", err);
-  }
+  })();
 };
 
 const broadcastWaitingGames = async () => {
@@ -579,14 +582,16 @@ io.on("connection", (socket) => {
     const gameId = participant.participant.gameId;
     const participants = await gameService.getGameParticipants(gameId);
 
-    socket.emit("playerLeft", { msg: 'You left the match!' });
+    socket.emit("playerLeft", { msg: "You left the match!" });
 
     const opponent = participants.find((p) => p.userId !== userId);
     if (opponent) {
       const opponentSocketId = presenceService.getSocketId(opponent.userId);
       if (opponentSocketId) {
-        io.to(opponentSocketId).emit("playerLeft", { msg: 'Opponent left the match!' });
-        console.log('emiiteed player left to')
+        io.to(opponentSocketId).emit("playerLeft", {
+          msg: "Opponent left the match!",
+        });
+        console.log("emiiteed player left to");
       }
     }
 
@@ -629,6 +634,8 @@ io.on("connection", (socket) => {
     */
   socket.on("disconnect", async () => {
     const userId = presenceService.removeBySocketId(socket.id);
+    broadcastOnlineUsers(); // Broadcast immediately on every disconnect
+
     if (!userId) return;
 
     const participant = await gameService.markDisconnected(userId);
@@ -657,7 +664,10 @@ io.on("connection", (socket) => {
       delete disconnectTimers[userId];
     }, DISCONNECT_TIMEOUT);
 
-    broadcastOnlineUsers();
+    // Also broadcast after the timeout logic is set up, if needed, but the instruction implies
+    // the first broadcast should handle the "every disconnect" part.
+    // If broadcastOnlineUsers is called here, it should also be backgrounded if it has DB work.
+    // For now, we'll assume the first backgrounded call is sufficient for "every disconnect".
   });
 });
 

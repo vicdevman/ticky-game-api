@@ -10,7 +10,12 @@ export const presenceService = {
   removeBySocketId(socketId) {
     const userId = socketIdToUsers[socketId];
     if (userId) {
-      delete onlineUsers[userId];
+      // Only remove from onlineUsers if the socketId matches the tracked one
+      // This prevents old disconnects from a previous tab/session from
+      // clearing a newer active connection for the same user.
+      if (onlineUsers[userId] === socketId) {
+        delete onlineUsers[userId];
+      }
       delete socketIdToUsers[socketId];
     }
     return userId;
