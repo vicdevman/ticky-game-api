@@ -166,4 +166,29 @@ export const Chat = {
         AND user_id = ${userId}
     `;
   },
+
+  // =========================
+  // UPDATE MESSAGE CONTENT
+  // =========================
+  async updateMessageContent(messageId, newContent) {
+    await db`
+      UPDATE messages
+      SET content = ${newContent}
+      WHERE id = ${messageId}
+    `;
+  },
+
+  // =========================
+  // MARK INVITE AS FINISHED
+  // =========================
+  async markInviteAsFinished(gameId) {
+    const pattern = `[GAME_INVITE]:${gameId}:%`;
+    const newContent = `[GAME_INVITE]:${gameId}:FINISHED`;
+
+    await db`
+      UPDATE messages
+      SET content = ${newContent}
+      WHERE content LIKE ${pattern}
+    `;
+  },
 };

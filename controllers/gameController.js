@@ -123,7 +123,7 @@ export const getGameHistory = async (req, res) => {
         ? await Game.getUserHistory(user.id)
         : await Game.getUserHistory(id);
 
-        console.log(rawHistory)
+    console.log(rawHistory);
 
     const history = rawHistory.map((entry) => ({
       id: entry.id,
@@ -184,6 +184,37 @@ export const getWaitingGames = async (req, res) => {
     });
   } catch (err) {
     console.error("Error fetching waiting games:", err);
+    res.status(500).json({ message: "Server error", ok: false });
+  }
+};
+
+export const getGameStatus = async (req, res) => {
+  const { gameId } = req.params;
+  try {
+    const gameResult = await gameService.getGameDetails(gameId);
+
+    if (!gameResult.exist) {
+      return res.status(200).json({
+        ok: true,
+        active: false,
+        message: "Game does not exist",
+      });
+    }
+
+    const participants = await gameService.getGameParticipants(gameId);
+
+    return res.status(200).json({
+      ok: true,
+      active: true,
+      playersCount: participants.length,
+      isPublic: gameResult.game.isPublic !== false,
+      participants: participants.map((p) => ({
+        userId: p.userId,
+        character: p.character,
+      })),
+    });
+  } catch (err) {
+    console.error("Error fetching game status:", err);
     res.status(500).json({ message: "Server error", ok: false });
   }
 };

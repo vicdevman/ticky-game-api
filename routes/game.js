@@ -4,6 +4,7 @@ import {
   endSession,
   getGameHistory,
   getWaitingGames,
+  getGameStatus,
 } from "../controllers/gameController.js";
 import { auth } from "../middleware/auth.js";
 import { Router } from "express";
@@ -16,5 +17,6 @@ router.post("/leave", auth, leaveGame);
 router.post("/end", auth, endSession);
 router.get("/history/:id", auth, getGameHistory);
 router.get("/waiting", getWaitingGames);
+router.get("/status/:gameId", getGameStatus);
 
 export default router;

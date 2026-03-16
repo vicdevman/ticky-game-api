@@ -9,6 +9,7 @@ export const gameService = {
     currentPlayer = "X",
     xScore = 0,
     oScore = 0,
+    isPublic = true,
   ) {
     const game = {
       id: gameId,
@@ -17,6 +18,7 @@ export const gameService = {
       xScore,
       oScore,
       time,
+      isPublic,
       roundStartedBy: currentPlayer,
       gameCount: 0,
       createdAt: Date.now(),
@@ -145,6 +147,9 @@ export const gameService = {
         const gameId = key.split(":")[1];
         const result = await this.getGameDetails(gameId);
         if (result.exist) {
+          // Filter out private games from public lobby
+          if (result.game.isPublic === false) continue;
+
           const participants = await this.getGameParticipants(gameId);
           waitingGames.push({
             ...result.game,

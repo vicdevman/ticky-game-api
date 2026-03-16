@@ -177,6 +177,9 @@ const handleProcessEndGame = async (gameId, penaltyData = null) => {
       try {
         console.log("Starting background DB updates for game:", gameId);
 
+        // Mark any invitation messages as FINISHED
+        await Chat.markInviteAsFinished(gameId);
+
         // Clear out game state from cache immediately to prevent new joiners
         await gameService.endGame(gameId);
 
@@ -303,7 +306,14 @@ io.on("connection", (socket) => {
     */
   socket.on(
     "joinGame",
-    async ({ gameId, userId, join, time = 2700, type = "classic" }) => {
+    async ({
+      gameId,
+      userId,
+      join,
+      time = 2700,
+      type = "classic",
+      isPublic = true,
+    }) => {
       socket.join(gameId);
       socket.data.gameId = gameId;
 
@@ -340,6 +350,7 @@ io.on("connection", (socket) => {
           currentPlayer: initialGame.game.currentPlayer,
           participants: participantsWithProfiles,
           type: initialGame.game.type,
+          gameId,
         });
 
         io.to(existing.participant.gameId).emit("playerReconnected", {
@@ -354,13 +365,13 @@ io.on("connection", (socket) => {
       const gameResult = await gameService.getGameDetails(gameId);
 
       if (join && !gameResult.exist) {
-        socket.emit("joinMsg", { exist: false });
+        socket.emit("joinMsg", { exist: false, reason: "GAME_EXPIRED" });
         return;
       }
 
       if (!gameResult.exist) {
         console.log("game created with type:", type);
-        await gameService.createGame(gameId, type, time);
+        await gameService.createGame(gameId, type, time, "X", 0, 0, isPublic);
         broadcastWaitingGames();
       }
 
@@ -369,7 +380,7 @@ io.on("connection", (socket) => {
       console.log("first version of participants:", participants);
 
       if (participants.length >= 2) {
-        socket.emit("gameFull");
+        socket.emit("gameFull", { reason: "GAME_FULL" });
         return;
       }
 
@@ -406,6 +417,7 @@ io.on("connection", (socket) => {
         currentPlayer: getGameDetails.game.currentPlayer,
         participants: updatedWithProfiles,
         type: getGameDetails.game.type,
+        gameId,
       });
 
       console.log(getGameDetails);
@@ -432,7 +444,11 @@ io.on("connection", (socket) => {
   socket.on("playerMove", async ({ gameId, boxIndex, player }) => {
     const gameResult = await gameService.getGameDetails(gameId);
 
+    console.log("means moved made: avent checjked if game exit");
+
     if (!gameResult.exist) return;
+
+    console.log("well it exists seee:-------------", { gameResult });
 
     const game = gameResult.game;
 
@@ -468,7 +484,7 @@ io.on("connection", (socket) => {
 
     game.currentPlayer = player === "X" ? "O" : "X";
 
-    console.log("board updated", game.currentPlayer);
+    console.log("board updated and about to broasdcast", game.currentPlayer);
 
     // Immediately broadcast the move result
     io.to(gameId).emit("boardUpdated", {
@@ -482,7 +498,7 @@ io.on("connection", (socket) => {
       nextIndex: game.nextIndex,
     });
 
-    console.log("match count: ----", game.gameCount);
+    console.log("match count: ---- ", game.gameCount);
 
     if (winner || draw) {
       // Round is over. Reset board after a delay and alternate starter.
@@ -554,6 +570,14 @@ io.on("connection", (socket) => {
     }
 
     try {
+      let finalContent = message.content;
+      if (
+        finalContent.startsWith("[GAME_INVITE]:") &&
+        finalContent.split(":").length === 2
+      ) {
+        finalContent += ":ACTIVE";
+      }
+
       let gameConvo = null;
       if (gameId) {
         gameConvo = await Chat.createDirectConversation(from, to);
@@ -562,9 +586,9 @@ io.on("connection", (socket) => {
       console.log("game convo updated i");
 
       await Chat.sendMessage({
-        conversationId: gameConvo || message.conversationId,
+        conversationId: gameConvo ? gameConvo.id : message.conversationId,
         senderId: from,
-        content: message.content,
+        content: finalContent,
       });
     } catch (err) {
       console.error("Error saving message to DB:", err);
@@ -621,11 +645,25 @@ io.on("connection", (socket) => {
   /*
     END GAME
     */
-  socket.on("endGame", async ({ gameId }) => {
+  socket.on("endGame", async ({ gameId, userId }) => {
     if (!gameId) {
       console.log("couldnt end game");
       return;
     }
+    const participants = await gameService.getGameParticipants(gameId);
+    socket.emit("playerLeft", { msg: "You ended the game!" });
+
+    const opponent = participants.find((p) => p.userId !== userId);
+    if (opponent) {
+      const opponentSocketId = presenceService.getSocketId(opponent.userId);
+      if (opponentSocketId) {
+        io.to(opponentSocketId).emit("playerLeft", {
+          msg: "Opponent ended game!",
+        });
+        console.log("emiiteed player left to");
+      }
+    }
+
     handleProcessEndGame(gameId).catch(console.error);
   });
 
@@ -657,7 +695,19 @@ io.on("connection", (socket) => {
         return; // player already came back
       }
 
-      const gameId = latest.participant.gameId;
+      const participants = await gameService.getGameParticipants(gameId);
+      socket.emit("playerLeft", { msg: "You lost connecion!" });
+
+      const opponent = participants.find((p) => p.userId !== userId);
+      if (opponent) {
+        const opponentSocketId = presenceService.getSocketId(opponent.userId);
+        if (opponentSocketId) {
+          io.to(opponentSocketId).emit("playerLeft", {
+            msg: "Opponent lost connection!",
+          });
+          console.log("emiiteed player left to");
+        }
+      }
 
       handleProcessEndGame(gameId, { leaverId: userId }).catch(console.error);
 

@@ -1,18 +1,17 @@
 import { Chat } from "../models/chat.js";
+import { gameService } from "../services/game.js";
 
 export const createConversation = async (req, res) => {
   const { user2Id } = req.body;
   const user1Id = req.user.id;
-  
+
   try {
     const conversation = await Chat.createDirectConversation(user1Id, user2Id);
-    res
-      .status(200)
-      .json({
-        message: "Conversation created or found",
-        conversation,
-        ok: true,
-      });
+    res.status(200).json({
+      message: "Conversation created or found",
+      conversation,
+      ok: true,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error", ok: false });
@@ -39,7 +38,36 @@ export const getMessages = async (req, res) => {
 
   try {
     const messages = await Chat.getMessages(conversationId, limit, cursor);
-    res.status(200).json({ message: "Messages fetched", messages, ok: true });
+
+    // Resolve Game Invitation Statuses
+    const resolvedMessages = await Promise.all(
+      messages.map(async (msg) => {
+        if (
+          msg.content.startsWith("[GAME_INVITE]:") &&
+          msg.content.endsWith(":ACTIVE")
+        ) {
+          const parts = msg.content.split(":");
+          const gameCode = parts[1];
+          const gameResult = await gameService.getGameDetails(gameCode);
+
+          if (!gameResult.exist) {
+            const newContent = `[GAME_INVITE]:${gameCode}:EXPIRED`;
+            // Update in DB (fire and forget or await if you want consistency)
+            Chat.updateMessageContent(msg.id, newContent).catch(console.error);
+            return { ...msg, content: newContent };
+          }
+        }
+        return msg;
+      }),
+    );
+
+    res
+      .status(200)
+      .json({
+        message: "Messages fetched",
+        messages: resolvedMessages,
+        ok: true,
+      });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error", ok: false });
