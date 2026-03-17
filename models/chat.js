@@ -134,14 +134,16 @@ export const Chat = {
         sender_id,
         content,
         message_type,
-        reply_to_message_id
+        reply_to_message_id,
+        is_read
       )
       VALUES (
         ${conversationId},
         ${senderId},
         ${content},
         ${messageType},
-        ${replyTo}
+        ${replyTo},
+        false
       )
       RETURNING *
     `;
@@ -159,11 +161,21 @@ export const Chat = {
   // MARK AS READ
   // =========================
   async markAsRead(conversationId, userId, messageId) {
+    if (messageId) {
+      await db`
+        UPDATE conversation_participants
+        SET last_read_message_id = ${messageId}
+        WHERE conversation_id = ${conversationId}
+          AND user_id = ${userId}
+      `;
+    }
+
     await db`
-      UPDATE conversation_participants
-      SET last_read_message_id = ${messageId}
+      UPDATE messages
+      SET is_read = true
       WHERE conversation_id = ${conversationId}
-        AND user_id = ${userId}
+        AND sender_id != ${userId}
+        AND is_read = false
     `;
   },
 
@@ -189,6 +201,17 @@ export const Chat = {
       UPDATE messages
       SET content = ${newContent}
       WHERE content LIKE ${pattern}
+    `;
+  },
+
+  // =========================
+  // GET CONVERSATION PARTICIPANTS
+  // =========================
+  async getConversationParticipants(conversationId) {
+    return await db`
+      SELECT user_id
+      FROM conversation_participants
+      WHERE conversation_id = ${conversationId}
     `;
   },
 };

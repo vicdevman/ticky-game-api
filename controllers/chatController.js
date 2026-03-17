@@ -1,11 +1,28 @@
 import { Chat } from "../models/chat.js";
 import { gameService } from "../services/game.js";
+import { io } from "../server.js";
+import { presenceService } from "../services/presence.js";
+import { redis } from "../db/cache.js";
 
 export const createConversation = async (req, res) => {
   const { user2Id } = req.body;
   const user1Id = req.user.id;
 
   try {
+    // Rate Limit Check for challenges (if it's a match flow)
+    // For simplicity, we check if this user is initiating a lot of conversations in a short time
+    const hourlyKey = `challenges:count:hour:${user1Id}`;
+    const count = await redis.incr(hourlyKey);
+    if (count === 1) await redis.expire(hourlyKey, 3600);
+
+    if (count > 10) {
+      return res.status(429).json({
+        message: "Challenge limit reached. Please try again later.",
+        ok: false,
+        reason: "LIMIT_REACHED",
+      });
+    }
+
     const conversation = await Chat.createDirectConversation(user1Id, user2Id);
     res.status(200).json({
       message: "Conversation created or found",
@@ -61,13 +78,11 @@ export const getMessages = async (req, res) => {
       }),
     );
 
-    res
-      .status(200)
-      .json({
-        message: "Messages fetched",
-        messages: resolvedMessages,
-        ok: true,
-      });
+    res.status(200).json({
+      message: "Messages fetched",
+      messages: resolvedMessages,
+      ok: true,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error", ok: false });
@@ -100,6 +115,18 @@ export const markAsRead = async (req, res) => {
 
   try {
     await Chat.markAsRead(conversationId, userId, messageId);
+
+    // Notify other participants
+    const participants = await Chat.getConversationParticipants(conversationId);
+    participants.forEach((p) => {
+      if (p.user_id !== userId) {
+        const socketId = presenceService.getSocketId(p.user_id);
+        if (socketId) {
+          io.to(socketId).emit("messages_read", { conversationId, userId });
+        }
+      }
+    });
+
     res.status(200).json({ message: "Marked as read", ok: true });
   } catch (err) {
     console.error(err);

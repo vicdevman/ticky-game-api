@@ -15,6 +15,7 @@ import { Game } from "./models/game.js";
 import { gameService } from "./services/game.js";
 import { presenceService } from "./services/presence.js";
 import { getSessionXP } from "./utils/calculateXP.js";
+import { redis } from "./db/cache.js";
 
 dotenv.config();
 
@@ -571,11 +572,32 @@ io.on("connection", (socket) => {
 
     try {
       let finalContent = message.content;
-      if (
-        finalContent.startsWith("[GAME_INVITE]:") &&
-        finalContent.split(":").length === 2
-      ) {
-        finalContent += ":ACTIVE";
+      const isInvite = finalContent.startsWith("[GAME_INVITE]:");
+
+      if (isInvite) {
+        // Rate limit checks
+        const minKey = `challenges:count:min:${from}`;
+        const hourKey = `challenges:count:hour:${from}`;
+
+        const [minCount, hourCount] = await Promise.all([
+          redis.incr(minKey),
+          redis.incr(hourKey),
+        ]);
+
+        if (minCount === 1) await redis.expire(minKey, 60);
+        if (hourCount === 1) await redis.expire(hourKey, 3600);
+
+        if (minCount > 3 || hourCount > 10) {
+          socket.emit("error", {
+            message: "Challenge limit reached. Please try again later.",
+            reason: "LIMIT_REACHED",
+          });
+          return;
+        }
+
+        if (finalContent.split(":").length === 2) {
+          finalContent += ":ACTIVE";
+        }
       }
 
       let gameConvo = null;
@@ -592,6 +614,32 @@ io.on("connection", (socket) => {
       });
     } catch (err) {
       console.error("Error saving message to DB:", err);
+    }
+  });
+
+  /*
+    TYPING STATUS
+    */
+  socket.on("typing_start", ({ conversationId, receiverId }) => {
+    const receiverSocketId = presenceService.getSocketId(receiverId);
+    if (receiverSocketId) {
+      io.to(receiverSocketId).emit("user_typing", {
+        userId: socket.data.userId || null, // Ensure we pass the typing user's ID
+        conversationId,
+      });
+
+      console.log(`${receiverSocketId} is typinngg`)
+    }
+
+  });
+
+  socket.on("typing_stop", ({ conversationId, receiverId }) => {
+    const receiverSocketId = presenceService.getSocketId(receiverId);
+    if (receiverSocketId) {
+      io.to(receiverSocketId).emit("user_stopped_typing", {
+        userId: socket.data.userId || null,
+        conversationId,
+      });
     }
   });
 
