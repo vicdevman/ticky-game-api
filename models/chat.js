@@ -205,6 +205,21 @@ export const Chat = {
   },
 
   // =========================
+  // GET CONVERSATION PARTNER
+  // =========================
+  async getConversationPartner(conversationId, userId) {
+    const result = await db`
+      SELECT u.id, u.username, u.avatar_url, u.xp
+      FROM conversation_participants cp
+      JOIN users u ON u.id = cp.user_id
+      WHERE cp.conversation_id = ${conversationId}
+        AND cp.user_id != ${userId}
+      LIMIT 1
+    `;
+    return result[0] || null;
+  },
+
+  // =========================
   // GET CONVERSATION PARTICIPANTS
   // =========================
   async getConversationParticipants(conversationId) {

@@ -8,20 +8,22 @@ export const createConversation = async (req, res) => {
   const { user2Id } = req.body;
   const user1Id = req.user.id;
 
+  console.log("callled with ------------------", { user1Id, user2Id });
+
   try {
     // Rate Limit Check for challenges (if it's a match flow)
     // For simplicity, we check if this user is initiating a lot of conversations in a short time
-    const hourlyKey = `challenges:count:hour:${user1Id}`;
-    const count = await redis.incr(hourlyKey);
-    if (count === 1) await redis.expire(hourlyKey, 3600);
+    // const hourlyKey = `challenges:count:hour:${user1Id}`;
+    // const count = await redis.incr(hourlyKey);
+    // if (count === 1) await redis.expire(hourlyKey, 3600);
 
-    if (count > 10) {
-      return res.status(429).json({
-        message: "Challenge limit reached. Please try again later.",
-        ok: false,
-        reason: "LIMIT_REACHED",
-      });
-    }
+    // if (count > 10) {
+    //   return res.status(429).json({
+    //     message: "Challenge limit reached. Please try again later.",
+    //     ok: false,
+    //     reason: "LIMIT_REACHED",
+    //   });
+    // }
 
     const conversation = await Chat.createDirectConversation(user1Id, user2Id);
     res.status(200).json({
@@ -128,6 +130,41 @@ export const markAsRead = async (req, res) => {
     });
 
     res.status(200).json({ message: "Marked as read", ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error", ok: false });
+  }
+};
+
+export const getConversationPartner = async (req, res) => {
+  const { conversationId } = req.params;
+  const userId = req.user.id;
+
+  try {
+    const participants = await Chat.getConversationParticipants(conversationId);
+
+    if (!participants || participants.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "Conversation not found", ok: false });
+    }
+
+    const isParticipant = participants.some((p) => p.user_id === userId);
+    if (!isParticipant) {
+      return res
+        .status(403)
+        .json({ message: "Forbidden (User not in conversation)", ok: false });
+    }
+
+    const partner = await Chat.getConversationPartner(conversationId, userId);
+    if (!partner) {
+      return res.status(404).json({ message: "Partner not found", ok: false });
+    }
+
+    res.status(200).json({
+      ok: true,
+      partner,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error", ok: false });
