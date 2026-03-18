@@ -6,6 +6,7 @@ import authRouter from "./routes/auth.js";
 import chatRouter from "./routes/chat.js";
 import userRouter from "./routes/user.js";
 import gameRouter from "./routes/game.js";
+import retentionRouter from "./routes/retention.js";
 import dotenv from "dotenv";
 import "./db/db.js"; // Initialize Neon DB
 import "./db/cache.js"; // Initialize Redis
@@ -36,6 +37,7 @@ app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/chat", chatRouter);
 app.use("/api/v1/users", userRouter);
 app.use("/api/v1/game", gameRouter);
+app.use("/api/v1/retention", retentionRouter);
 
 let games = {}; // {gameid: {ouenirejd:'X', iyeg7iwdow:'O'}, gameid: {ouenirejd:'X', iyeg7iwdow:'O'}, board: Array(9).fill('')}
 // onlineUsers and socketIdToUsers moved to presenceService
@@ -628,9 +630,8 @@ io.on("connection", (socket) => {
         conversationId,
       });
 
-      console.log(`${receiverSocketId} is typinngg`)
+      console.log(`${receiverSocketId} is typinngg`);
     }
-
   });
 
   socket.on("typing_stop", ({ conversationId, receiverId }) => {

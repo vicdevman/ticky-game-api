@@ -126,4 +126,29 @@ export const User = {
       WHERE id = ${id}
     `;
   },
+
+  async updatePassword(userId, password_hash) {
+    await db`
+      UPDATE users
+      SET password_hash = ${password_hash}, updated_at = NOW()
+      WHERE id = ${userId}
+    `;
+  },
+
+  async findInactiveUsers(days = 7) {
+    return await db`
+      SELECT id, email, username
+      FROM users
+      WHERE last_seen_at < (NOW() - INTERVAL '1 day' * ${days})
+        AND (reminder_sent_at IS NULL OR reminder_sent_at < (NOW() - INTERVAL '1 day' * ${days}))
+    `;
+  },
+
+  async updateReminderSentAt(userId) {
+    await db`
+      UPDATE users
+      SET reminder_sent_at = NOW()
+      WHERE id = ${userId}
+    `;
+  },
 };
