@@ -6,8 +6,8 @@ export const User = {
     const result = await db`
       SELECT id, username, email, password_hash
       FROM users
-      WHERE username = ${identifier}
-         OR email = ${identifier}
+      WHERE LOWER(username) = LOWER(${identifier})
+         OR LOWER(email) = LOWER(${identifier})
       LIMIT 1
     `;
 
@@ -18,8 +18,8 @@ export const User = {
     const result = await db`
       SELECT 1
       FROM users
-      WHERE username = ${username}
-         OR email = ${email}
+      WHERE LOWER(username) = LOWER(${username})
+         OR LOWER(email) = LOWER(${email})
       LIMIT 1
     `;
 
@@ -83,8 +83,8 @@ export const User = {
     const result = await db`
       SELECT 1
       FROM users
-      WHERE username = ${identifier}
-         OR email = ${identifier}
+      WHERE LOWER(username) = LOWER(${identifier})
+         OR LOWER(email) = LOWER(${identifier})
       LIMIT 1
     `;
     return result.length > 0;
