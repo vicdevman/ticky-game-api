@@ -4,7 +4,7 @@ import db from "../db/db.js";
 export const User = {
   async findByUsernameOrEmail(identifier) {
     const result = await db`
-      SELECT id, username, email, password_hash
+      SELECT id, username, email, password_hash, role
       FROM users
       WHERE LOWER(username) = LOWER(${identifier})
          OR LOWER(email) = LOWER(${identifier})
@@ -30,7 +30,7 @@ export const User = {
     const result = await db`
       INSERT INTO users (username, email, password_hash)
       VALUES (${username}, ${email}, ${password_hash})
-      RETURNING id, username, email, xp, avatar_url, bio, total_games
+      RETURNING id, username, email, xp, avatar_url, bio, total_games, role
     `;
 
     return result[0];
@@ -38,7 +38,7 @@ export const User = {
 
   async findById(id) {
     const result = await db`
-      SELECT id, username, email, avatar_url, bio, xp, total_games, last_seen_at, created_at
+      SELECT id, username, email, avatar_url, bio, xp, total_games, last_seen_at, created_at, role
       FROM users
       WHERE id = ${id}
       LIMIT 1

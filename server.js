@@ -8,6 +8,8 @@ import userRouter from "./routes/user.js";
 import gameRouter from "./routes/game.js";
 import retentionRouter from "./routes/retention.js";
 import trainingRouter from "./routes/training.js";
+import adminRouter from "./routes/admin.js";
+import { trafficLogger } from "./middleware/trafficLogger.js";
 import dotenv from "dotenv";
 import "./db/db.js"; // Initialize Neon DB
 import "./db/cache.js"; // Initialize Redis
@@ -32,6 +34,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(trafficLogger);
 
 // Routes
 app.use("/api/v1/auth", authRouter);
@@ -40,6 +43,7 @@ app.use("/api/v1/users", userRouter);
 app.use("/api/v1/game", gameRouter);
 app.use("/api/v1/retention", retentionRouter);
 app.use("/api/v1/training", trainingRouter);
+app.use("/api/v1/admin", adminRouter);
 
 let games = {}; // {gameid: {ouenirejd:'X', iyeg7iwdow:'O'}, gameid: {ouenirejd:'X', iyeg7iwdow:'O'}, board: Array(9).fill('')}
 // onlineUsers and socketIdToUsers moved to presenceService
