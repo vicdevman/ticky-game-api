@@ -7,6 +7,7 @@ import chatRouter from "./routes/chat.js";
 import userRouter from "./routes/user.js";
 import gameRouter from "./routes/game.js";
 import retentionRouter from "./routes/retention.js";
+import trainingRouter from "./routes/training.js";
 import dotenv from "dotenv";
 import "./db/db.js"; // Initialize Neon DB
 import "./db/cache.js"; // Initialize Redis
@@ -38,6 +39,7 @@ app.use("/api/v1/chat", chatRouter);
 app.use("/api/v1/users", userRouter);
 app.use("/api/v1/game", gameRouter);
 app.use("/api/v1/retention", retentionRouter);
+app.use("/api/v1/training", trainingRouter);
 
 let games = {}; // {gameid: {ouenirejd:'X', iyeg7iwdow:'O'}, gameid: {ouenirejd:'X', iyeg7iwdow:'O'}, board: Array(9).fill('')}
 // onlineUsers and socketIdToUsers moved to presenceService
