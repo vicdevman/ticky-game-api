@@ -631,8 +631,6 @@ io.on("connection", (socket) => {
         userId: socket.data.userId || null, // Ensure we pass the typing user's ID
         conversationId,
       });
-
-      console.log(`${receiverSocketId} is typinngg`);
     }
   });
 
